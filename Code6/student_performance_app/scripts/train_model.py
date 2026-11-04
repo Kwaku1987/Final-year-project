@@ -105,6 +105,8 @@ def summarize(framework) -> dict:
     return {
         "target": framework.target_description,
         "predictors": list(framework.required_features),
+        "split": getattr(framework, "split_metadata", None),
+        "fairness": getattr(framework, "fairness_report", None),
         "cross_validation": framework.cross_validation,
         "models": comparison,
         "best_model": framework.best_model_name,
@@ -158,6 +160,47 @@ def main(argv=None) -> int:
         help="how Low/Average/High thresholds are chosen",
     )
 
+    parser.add_argument(
+        "--split",
+        choices=("random", "temporal"),
+        default="random",
+        help=(
+            "random (default) holds out a random 20%% of the cohort; "
+            "temporal holds out the most recent semester(s), which is "
+            "the only split that measures forward generalisation"
+        ),
+    )
+
+    parser.add_argument(
+        "--period-column",
+        default=None,
+        help=(
+            "column holding the academic period (auto-detected from "
+            "semester/session/term/academic_year when omitted)"
+        ),
+    )
+
+    parser.add_argument(
+        "--test-period",
+        action="append",
+        default=None,
+        dest="test_periods",
+        help=(
+            "period to hold out; repeatable. Defaults to the most "
+            "recent period in the data (temporal split only)"
+        ),
+    )
+
+    parser.add_argument(
+        "--fairness",
+        action="store_true",
+        help=(
+            "also disaggregate the selected model's hold-out "
+            "performance by gender / programme / entry qualification, "
+            "where those columns exist"
+        ),
+    )
+
     args = parser.parse_args(argv)
 
     # Apply overrides before importing config-dependent modules.
@@ -197,7 +240,16 @@ def main(argv=None) -> int:
 
     try:
 
-        framework.run_pipeline(dataframe)
+        framework.run_pipeline(
+            dataframe,
+            split_strategy=args.split,
+            period_column=args.period_column,
+            test_periods=args.test_periods,
+        )
+
+        if args.fairness:
+
+            framework.evaluate_subgroups()
 
         saved_to = framework.save_best_model(str(args.out))
 
@@ -208,6 +260,8 @@ def main(argv=None) -> int:
         return 1
 
     report = summarize(framework)
+
+    logger.info("Split: %s", getattr(framework, "split_summary", args.split))
 
     logger.info("Best model: %s", report["best_model"])
     logger.info(
@@ -230,6 +284,29 @@ def main(argv=None) -> int:
             metrics["balanced_accuracy"] or 0.0,
             metrics["baseline_majority"] or 0.0,
         )
+
+    if args.fairness and framework.fairness_report:
+
+        report["fairness_markdown"] = framework.fairness_markdown()
+
+        for column, payload in (
+            framework.fairness_report.get("columns") or {}
+        ).items():
+
+            summary = payload["summary"]
+
+            logger.info(
+                "Fairness by %s: %d subgroup(s), gap=%s (%s vs %s)",
+                column,
+                len(payload["subgroups"]),
+                summary.get("gap"),
+                summary.get("best_group"),
+                summary.get("worst_group"),
+            )
+
+            for flag in summary.get("flags", []):
+
+                logger.warning("FAIRNESS (%s): %s", column, flag)
 
     for caveat in report["caveats"]:
 

@@ -85,7 +85,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 # PROJECT CONFIGURATION
 # ============================================================
 
-PROJECT_VERSION = "3.2"
+PROJECT_VERSION = "3.3"
 
 TEST_SIZE = 0.20
 

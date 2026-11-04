@@ -27,6 +27,14 @@ Usage
     python scripts/report_results.py --data data/cohort.csv \
         --definition cpi          # legacy comparison
 
+    python scripts/report_results.py --data data/cohort.csv \
+        --temporal                # add the temporal-validation table
+                                  # (this re-trains everything, so it
+                                  # roughly doubles the run time)
+
+Fairness tables are produced by default whenever the dataset carries a
+demographic column; pass --no-fairness to skip them.
+
 Exit codes: 0 success, 1 failure.
 ====================================================================
 """
@@ -63,7 +71,10 @@ def load_dataset(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def build_tables(framework) -> dict:
+def build_tables(
+    framework,
+    temporal_comparison=None,
+) -> dict:
     """Collect every number a results chapter needs."""
 
     comparison = []
@@ -103,6 +114,10 @@ def build_tables(framework) -> dict:
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "target": framework.target_description,
+        "split": getattr(framework, "split_metadata", None),
+        "split_summary": getattr(framework, "split_summary", None),
+        "temporal_comparison": temporal_comparison,
+        "fairness": getattr(framework, "fairness_report", None),
         "predictors": list(framework.required_features),
         "best_model": best,
         "best_model_is_calibrated": framework.best_model_is_calibrated,
@@ -163,6 +178,59 @@ def to_markdown(payload: dict) -> str:
             f"- Class counts in the full set: "
             f"{payload['label_distribution']}"
         )
+        lines.append("")
+
+    if payload.get("split_summary"):
+
+        lines.append("## Validation design")
+        lines.append("")
+        lines.append(payload["split_summary"])
+        lines.append("")
+
+    if payload.get("temporal_comparison"):
+
+        lines.append("## Temporal validation (train earlier periods, test the latest)")
+        lines.append("")
+        lines.append(
+            "The same pipeline, run twice on the same cohort: once with a "
+            "random 80/20 split and once holding out the most recent "
+            "period. The change column is what the model gains or loses "
+            "when it must predict a semester it has never seen -- a "
+            "large negative change is the finding to worry about, and a "
+            "change near zero is the claim an early-warning system "
+            "needs to be able to make."
+        )
+        lines.append("")
+        lines.append("| Model | Random split | Temporal split | Change |")
+        lines.append("|---|---|---|---|")
+
+        for row in payload["temporal_comparison"]:
+
+            def fmt_split(value):
+
+                return "—" if value is None else f"{value:.3f}"
+
+            change = (
+                f"{row['gap']:+.3f}"
+                if row["gap"] is not None
+                else "—"
+            )
+
+            lines.append(
+                f"| {row['model']} | {fmt_split(row['random'])} | "
+                f"{fmt_split(row['temporal'])} | {change} |"
+            )
+
+        lines.append("")
+
+    if payload.get("fairness"):
+
+        lines.append("## Fairness disaggregation")
+        lines.append("")
+
+        from backend.evaluation.fairness import to_markdown
+
+        lines.append(to_markdown(payload["fairness"]))
         lines.append("")
 
     lines.append("## Model comparison")
@@ -345,6 +413,46 @@ def main(argv=None) -> int:
         help="target definition override",
     )
 
+    parser.add_argument(
+        "--temporal",
+        action="store_true",
+        help=(
+            "also run a temporal split (train earlier periods, test the "
+            "latest) and report the change -- this trains every model "
+            "twice"
+        ),
+    )
+
+    parser.add_argument(
+        "--period-column",
+        default=None,
+        help="column holding the academic period (auto-detected)",
+    )
+
+    parser.add_argument(
+        "--test-period",
+        action="append",
+        default=None,
+        dest="test_periods",
+        help="period(s) to hold out for the temporal run; repeatable",
+    )
+
+    parser.add_argument(
+        "--no-fairness",
+        action="store_true",
+        help=(
+            "skip the subgroup tables (on by default: a results chapter "
+            "should not be able to leave them out by forgetting a flag)"
+        ),
+    )
+
+    parser.add_argument(
+        "--min-support",
+        type=int,
+        default=30,
+        help="minimum subgroup size before a row is called reliable",
+    )
+
     args = parser.parse_args(argv)
 
     if args.definition:
@@ -369,7 +477,12 @@ def main(argv=None) -> int:
 
     try:
 
-        framework.run_pipeline(dataframe)
+        framework.run_pipeline(
+            dataframe,
+            split_strategy="temporal" if args.temporal else "random",
+            period_column=args.period_column,
+            test_periods=args.test_periods,
+        )
 
     except Exception as error:
 
@@ -377,7 +490,69 @@ def main(argv=None) -> int:
 
         return 1
 
-    payload = build_tables(framework)
+    fairness_error = None
+
+    if not args.no_fairness:
+
+        try:
+
+            framework.evaluate_subgroups(
+                min_support=args.min_support
+            )
+
+        except Exception as error:
+
+            fairness_error = str(error)
+
+            print(
+                f"Fairness disaggregation skipped: {error}",
+                file=sys.stderr,
+            )
+
+    temporal = None
+
+    if args.temporal:
+
+        # The temporal run above is the headline; the random run is the
+        # comparison. Run the other side here so both come from the
+        # same data and the same code path.
+        try:
+
+            random_framework = FrameworkFactory.create()
+
+            random_framework.run_pipeline(dataframe.copy())
+
+            from backend.preprocessing.split_strategy import (
+                compare_splits,
+            )
+
+            temporal = compare_splits(
+                {
+                    name: dict(result.get("metrics") or {})
+                    for name, result in (
+                        random_framework.comparison_results or {}
+                    ).items()
+                },
+                {
+                    name: dict(result.get("metrics") or {})
+                    for name, result in (
+                        framework.comparison_results or {}
+                    ).items()
+                },
+            )
+
+        except Exception as error:
+
+            print(
+                f"Random-split comparison failed: {error}",
+                file=sys.stderr,
+            )
+
+    payload = build_tables(framework, temporal_comparison=temporal)
+
+    if fairness_error:
+
+        payload["fairness_error"] = fairness_error
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
 

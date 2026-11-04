@@ -28,7 +28,7 @@ from datetime import datetime
 import sys
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -39,6 +39,14 @@ from sklearn.linear_model import LogisticRegression
 from backend.interpretation.model_interpreter import (
     InterpretationReport,
     ModelInterpreter,
+)
+
+from backend.evaluation.fairness import (
+    fairness_report,
+)
+
+from backend.evaluation.fairness import (
+    to_markdown as fairness_to_markdown,
 )
 
 from backend.intervention.intervention_engine import (
@@ -314,6 +322,16 @@ class StudentPerformanceFramework:
         # Hyperparameter search results per model.
         self.tuning_results: Dict[str, Dict[str, Any]] = {}
 
+        # How the data was split ("random" | "temporal") and the
+        # periods each side covers. Recorded so no result is ever
+        # reported without saying what it was measured on.
+        self.split_metadata: Dict[str, Any] = {
+            "strategy": "random"
+        }
+
+        # Last fairness report produced by evaluate_subgroups().
+        self.fairness_report: Optional[Dict[str, Any]] = None
+
         # Whether the selected model had its probabilities
         # calibrated (affects how confidence should be read).
         self.best_model_is_calibrated: bool = False
@@ -463,6 +481,9 @@ class StudentPerformanceFramework:
         dataframe: Optional[
             pd.DataFrame
         ] = None,
+        split_strategy: str = "random",
+        period_column: Optional[str] = None,
+        test_periods: Optional[List[str]] = None,
     ) -> Any:
         """
         Generate CPI-based performance labels and prepare data.
@@ -533,9 +554,19 @@ class StudentPerformanceFramework:
 
         self.prepared_data = (
             self._call_prepare_method(
-                working_data
+                working_data,
+                split_strategy=split_strategy,
+                period_column=period_column,
+                test_periods=test_periods,
             )
         )
+
+        if isinstance(self.prepared_data, dict):
+
+            self.split_metadata = (
+                self.prepared_data.get("split_metadata")
+                or {"strategy": split_strategy}
+            )
 
         return self.prepared_data
 
@@ -1254,6 +1285,244 @@ class StudentPerformanceFramework:
 
     # --------------------------------------------------------
 
+    # ========================================================
+    # TEMPORAL VALIDATION AND FAIRNESS (v3.3)
+    # ========================================================
+
+    @property
+    def split_summary(self) -> str:
+        """One line describing the split, for a report or a caption."""
+
+        metadata = self.split_metadata or {}
+
+        if metadata.get("strategy") != "temporal":
+
+            return (
+                "Random split: "
+                f"{metadata.get('n_train', '?')} train / "
+                f"{metadata.get('n_test', '?')} test rows drawn from the "
+                "same cohort, so the test set shares its cohort effects."
+            )
+
+        return (
+            "Temporal split: trained on "
+            f"{', '.join(metadata.get('train_periods') or [])} "
+            f"({metadata.get('n_train')} rows), tested on "
+            f"{', '.join(metadata.get('test_periods') or [])} "
+            f"({metadata.get('n_test')} rows). No period appears on "
+            "both sides."
+        )
+
+    # --------------------------------------------------------
+
+    def evaluate_subgroups(
+        self,
+        group_columns: Optional[Sequence[str]] = None,
+        min_support: int = 30,
+    ) -> Dict[str, Any]:
+        """
+        Disaggregate the selected model's hold-out performance.
+
+        Answers the question a single accuracy figure cannot: does this
+        model work equally well for every group of students? Subgroups
+        below `min_support` are reported but marked unreliable.
+
+        Returns
+        -------
+        dict
+            Per-column subgroup tables plus a disparity summary.
+
+        Raises
+        ------
+        RuntimeError
+            When there is no prepared data or no test split to measure.
+        """
+
+        if self.prepared_data is None:
+
+            raise RuntimeError(
+                "No prepared data. Call prepare_data() first."
+            )
+
+        if not isinstance(self.prepared_data, dict):
+
+            raise RuntimeError(
+                "This preparation pipeline does not expose its test "
+                "split, so subgroup metrics would not be aligned with "
+                "the hold-out rows. Re-run with the bundled pipeline."
+            )
+
+        X_test = self.prepared_data.get("X_test_original")
+
+        y_test = self.prepared_data.get("y_test")
+
+        if X_test is None or y_test is None:
+
+            raise RuntimeError(
+                "The prepared data has no hold-out set to disaggregate."
+            )
+
+        if self.validated_data is None:
+
+            raise RuntimeError(
+                "No validated data available to read group columns from."
+            )
+
+        model_result = self._extract_estimator(self.best_model)
+
+        requires_scaling = bool(
+            self.model_requires_scaling.get(self.best_model_name, False)
+        )
+
+        features = self.prepared_data[
+            "X_test_scaled" if requires_scaling else "X_test_original"
+        ]
+
+        predictions = model_result.predict(features)
+
+        # Align the demographic columns with the held-out rows by
+        # index: a fairness table built on misaligned rows is worse
+        # than no fairness table.
+        frame = self.validated_data.loc[
+            features.index
+        ].reset_index(drop=True)
+
+        report = fairness_report(
+            y_true=list(y_test),
+            y_pred=list(predictions),
+            dataframe=frame,
+            group_columns=group_columns,
+            min_support=min_support,
+        )
+
+        report["model"] = self.best_model_name
+
+        report["split"] = self.split_metadata
+
+        self.fairness_report = report
+
+        return report
+
+    # --------------------------------------------------------
+
+    def fairness_markdown(self) -> str:
+        """Markdown rendering of the last fairness report."""
+
+        if self.fairness_report is None:
+
+            self.evaluate_subgroups()
+
+        return fairness_to_markdown(self.fairness_report or {})
+
+    # --------------------------------------------------------
+
+    def temporal_comparison(
+        self,
+        dataframe: Optional[pd.DataFrame] = None,
+        period_column: Optional[str] = None,
+        test_periods: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Run the whole pipeline twice -- random split and temporal split
+        -- and line the results up.
+
+        This is the single most useful table in the report: it shows
+        what the model loses when it has to predict a semester it has
+        never seen. It is expensive (two full trainings), so it is a
+        deliberate call rather than part of every run.
+        """
+
+        if dataframe is None:
+
+            source = self.raw_data
+
+            if source is None:
+
+                raise RuntimeError(
+                    "No raw dataset held. Pass one explicitly."
+                )
+
+        else:
+
+            source = dataframe
+
+        from backend.preprocessing.split_strategy import compare_splits
+
+        random_framework = self.__class__(
+            validator=self.validator,
+            cpi_engine=self.cpi_engine,
+            preparation_pipeline=self._fresh_preparation_pipeline(),
+            trainer=self._fresh_trainer(),
+            evaluator=self._fresh_evaluator(),
+            interpreter=self.interpreter,
+            label_mapping=self.label_mapping,
+            required_features=self.required_features,
+        )
+
+        temporal_framework = self.__class__(
+            validator=self.validator,
+            cpi_engine=self.cpi_engine,
+            preparation_pipeline=self._fresh_preparation_pipeline(),
+            trainer=self._fresh_trainer(),
+            evaluator=self._fresh_evaluator(),
+            interpreter=self.interpreter,
+            label_mapping=self.label_mapping,
+            required_features=self.required_features,
+        )
+
+        random_framework.run_pipeline(source.copy())
+
+        temporal_framework.run_pipeline(
+            source.copy(),
+            split_strategy="temporal",
+            period_column=period_column,
+            test_periods=test_periods,
+        )
+
+        random_metrics = self._metrics_for(random_framework)
+
+        temporal_metrics = self._metrics_for(temporal_framework)
+
+        return compare_splits(random_metrics, temporal_metrics)
+
+    # --------------------------------------------------------
+
+    @staticmethod
+    def _metrics_for(framework) -> Dict[str, Dict[str, Any]]:
+        """Flatten a framework's comparison results to name -> metrics."""
+
+        return {
+            name: dict(result.get("metrics") or {})
+            for name, result in (
+                getattr(framework, "comparison_results", {}) or {}
+            ).items()
+        }
+
+    # --------------------------------------------------------
+
+    def _fresh_preparation_pipeline(self):
+        """A new pipeline of the same type, for a second run."""
+
+        from backend.preprocessing.data_preparation_pipeline import (
+            DataPreparationPipeline,
+        )
+
+        return DataPreparationPipeline(
+            predictor_columns=self.required_features
+        )
+
+    def _fresh_trainer(self):
+        from backend.training.model_trainer import ModelTrainer
+
+        return ModelTrainer()
+
+    def _fresh_evaluator(self):
+        from backend.evaluation.model_evaluator import ModelEvaluator
+
+        return ModelEvaluator()
+
+    # ========================================================
+
     def methodology_caveats(self) -> list[str]:
         """
         Statements that must travel with any reported metric.
@@ -1340,6 +1609,42 @@ class StudentPerformanceFramework:
                     "accuracy against that, not against zero."
                 )
 
+        strategy = (self.split_metadata or {}).get("strategy", "random")
+
+        if strategy == "temporal":
+
+            periods = self.split_metadata.get("test_periods") or []
+
+            caveats.append(
+                "Validation is temporal: the model was trained on "
+                "earlier periods and tested on "
+                f"{', '.join(periods)}. This is evidence of forward "
+                "transfer, but only across one horizon -- it does not "
+                "prove the model survives several semesters."
+            )
+
+        else:
+
+            caveats.append(
+                "Validation is a random split of one cohort, so the "
+                "test rows share the training rows' cohort effects "
+                "(same semester, same marking). It measures fit, not "
+                "whether the model works next semester. Run the "
+                "temporal split (scripts/train_model.py --split "
+                "temporal) before claiming forward generalisation."
+            )
+
+        if self.fairness_report is not None:
+
+            columns = list((self.fairness_report or {}).get("columns", {}))
+
+            caveats.append(
+                "Fairness was disaggregated by "
+                f"{', '.join(columns) if columns else 'no available column'}"
+                "; subgroups below the support threshold are marked "
+                "unreliable rather than averaged away."
+            )
+
         for warning in self.validator_warnings:
 
             caveats.append(f"Data note: {warning}")
@@ -1391,6 +1696,9 @@ class StudentPerformanceFramework:
     def run_pipeline(
         self,
         dataframe: pd.DataFrame,
+        split_strategy: str = "random",
+        period_column: Optional[str] = None,
+        test_periods: Optional[List[str]] = None,
     ) -> FrameworkResult:
         """
         Execute the complete end-to-end workflow.
@@ -1420,7 +1728,10 @@ class StudentPerformanceFramework:
 
         prepared = (
             self.prepare_data(
-                validated
+                validated,
+                split_strategy=split_strategy,
+                period_column=period_column,
+                test_periods=test_periods,
             )
         )
 
@@ -1985,9 +2296,16 @@ class StudentPerformanceFramework:
     def _call_prepare_method(
         self,
         dataframe: pd.DataFrame,
+        split_strategy: str = "random",
+        period_column: Optional[str] = None,
+        test_periods: Optional[List[str]] = None,
     ) -> Any:
         """
         Call the data preparation pipeline.
+
+        Split options are only passed when a temporal split is asked
+        for, so a pipeline that does not know about them (a custom
+        implementation, or an older one) keeps working unchanged.
         """
 
         for method_name in (
@@ -2005,6 +2323,15 @@ class StudentPerformanceFramework:
                     self.preparation_pipeline,
                     method_name,
                 )
+
+                if str(split_strategy).lower() == "temporal":
+
+                    return method(
+                        dataframe,
+                        split_strategy=split_strategy,
+                        period_column=period_column,
+                        test_periods=test_periods,
+                    )
 
                 return method(
                     dataframe

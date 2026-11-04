@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import logging
 
+from typing import List, Optional
+
 import pandas as pd
 
 from backend.config import (
@@ -46,6 +48,11 @@ from backend.config import (
 )
 
 from backend.preprocessing.feature_engineer import FeatureEngineer
+from backend.preprocessing.split_strategy import (
+    SplitMetadata,
+    random_split_metadata,
+    temporal_split,
+)
 from backend.preprocessing.target_encoder import TargetEncoder
 
 logger = logging.getLogger(__name__)
@@ -69,23 +76,47 @@ class DataPreparationPipeline:
             predictor_columns or PREDICTOR_COLUMNS
         )
 
+        # How the data was split, for the report. "random" unless the
+        # caller asks for temporal validation.
+        self.split_metadata: SplitMetadata = SplitMetadata(
+            strategy="random"
+        )
+
         logger.info(
             "Data Preparation Pipeline initialized."
         )
 
     # -------------------------------------------------------
 
-    def prepare(self, dataframe: pd.DataFrame) -> dict:
+    def prepare(
+        self,
+        dataframe: pd.DataFrame,
+        split_strategy: str = "random",
+        period_column: Optional[str] = None,
+        test_periods: Optional[List[str]] = None,
+    ) -> dict:
         """
         Run the complete data preparation sequence on a
         validated, CPI-labeled dataframe.
+
+        Parameters
+        ----------
+        split_strategy
+            "random" (default) or "temporal". Temporal holds out whole
+            academic periods at the end of the timeline, which is the
+            only split that measures forward generalisation.
+        period_column, test_periods
+            Only meaningful for the temporal strategy; see
+            backend/preprocessing/split_strategy.py.
 
         Returns
         -------
         dict
             Model-ready data: scaled/original feature sets,
-            encoded targets, scaler, feature names, and the
-            performance-level mapping/labels.
+            encoded targets, scaler, feature names, the
+            performance-level mapping/labels, and the split metadata
+            (strategy, periods, indices) so results can say what they
+            were measured on.
         """
 
         logger.info(
@@ -107,9 +138,50 @@ class DataPreparationPipeline:
         # Module 2 : train/test split
         # ---------------------------------
 
-        split_data = feature_engineer.train_test_split_data(
-            X, y
-        )
+        if str(split_strategy).lower() == "temporal":
+
+            temporal = temporal_split(
+                X,
+                y,
+                dataframe,
+                period_column=period_column,
+                test_periods=test_periods,
+            )
+
+            split_data = {
+                "X_train": temporal["X_train"],
+                "X_test": temporal["X_test"],
+                "y_train": temporal["y_train"],
+                "y_test": temporal["y_test"],
+            }
+
+            self.split_metadata = temporal["metadata"]
+
+            logger.info(
+                "Temporal split: train on %s, test on %s.",
+                self.split_metadata.train_periods,
+                self.split_metadata.test_periods,
+            )
+
+        elif str(split_strategy).lower() == "random":
+
+            split_data = feature_engineer.train_test_split_data(
+                X, y
+            )
+
+            self.split_metadata = random_split_metadata(
+                len(split_data["X_train"]),
+                len(split_data["X_test"]),
+                split_data["y_train"],
+                split_data["y_test"],
+            )
+
+        else:
+
+            raise ValueError(
+                f"Unknown split strategy {split_strategy!r}; expected "
+                "'random' or 'temporal'."
+            )
 
         feature_engineer.validate_split(split_data)
 
@@ -173,4 +245,15 @@ class DataPreparationPipeline:
             "mapping": PERFORMANCE_MAPPING,
 
             "labels": PERFORMANCE_LABELS,
+
+            # Split provenance. test_index lets the caller pull
+            # demographic columns for the held-out rows, which is how
+            # fairness disaggregation stays aligned with the metrics.
+            "split_strategy": self.split_metadata.strategy,
+
+            "split_metadata": self.split_metadata.to_dict(),
+
+            "train_index": list(split_data["X_train"].index),
+
+            "test_index": list(split_data["X_test"].index),
         }
