@@ -1,14 +1,44 @@
+# ============================================================
+# Streamlit configuration
+# ============================================================
+# These are PRODUCTION-SAFE defaults: CORS and XSRF protection
+# are ON. Do not weaken them on a real deployment.
+#
+# For a local sandbox/preview behind a trusted proxy (where the
+# page is embedded in an iframe and cookies are rewritten), the
+# flags can be overridden at launch WITHOUT editing this file:
+#
+#     streamlit run app.py \
+#         --server.enableCORS false \
+#         --server.enableXsrfProtection false
+#
+# That override is for preview environments only. See
+# docs/DEPLOYMENT.md §6.
+# ============================================================
+
 [server]
 address = "0.0.0.0"
 port = 8501
 headless = true
-enableCORS = false
-enableXsrfProtection = false
-enableWebsocketCompression = false
+enableCORS = true
+enableXsrfProtection = true
+# Student datasets are small; cap uploads so a 500 MB file
+# cannot be used to exhaust server memory.
+maxUploadSize = 25
 fileWatcherType = "none"
+enableStaticServing = false
 
 [browser]
 gatherUsageStats = false
+serverAddress = "localhost"
+
+[client]
+# Do not leak Python tracebacks to users in a deployed instance.
+showErrorDetails = false
+toolbarMode = "minimal"
+
+[logger]
+level = "info"
 
 [theme]
 base = "light"

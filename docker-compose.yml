@@ -1,0 +1,56 @@
+# ============================================================
+# Student Performance Assessment System -- single-host deployment
+# ============================================================
+#   cp .env.example .env      # then edit: password hash
+#   docker compose up -d --build
+#   docker compose logs -f
+#
+# Everything the container writes lives in the `spas-data` volume,
+# so `docker compose down` (without -v) is safe.
+# ============================================================
+
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: spas:3.2
+    container_name: spas-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SPAS_DB_PATH: /data/spas.db
+    ports:
+      # Bind to localhost only; put a TLS reverse proxy in front
+      # (see docs/DEPLOYMENT.md §6). Change to "8501:8501" only if
+      # the host is not internet-facing.
+      - "127.0.0.1:8501:8501"
+    volumes:
+      # Assessments + audit trail (must persist)
+      - spas-data:/data
+      # Model bundle: swap in a retrained bundle without rebuilding
+      - ./Code6/student_performance_app/models:/app/models:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request, sys
+          sys.exit(0 if urllib.request.urlopen(
+              "http://127.0.0.1:8501/_stcore/health", timeout=4
+          ).read().strip() == b"ok" else 1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+volumes:
+  spas-data:
+    name: spas-data

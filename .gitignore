@@ -1,0 +1,17 @@
+# ============================================================
+# Student Performance Assessment System -- repository root
+# ============================================================
+
+# Secrets: the real .env holds the Training Mode password hash
+.env
+*.env
+!.env.example
+
+# Local backups of the assessment database
+backups/
+*.db
+*.db-journal
+
+# OS
+.DS_Store
+Thumbs.db

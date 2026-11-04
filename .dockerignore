@@ -1,0 +1,31 @@
+# Version control / docs not needed at runtime
+.git
+.gitignore
+CHANGELOG.md
+README.md
+LICENSE
+*.md
+
+# Python cruft
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+.venv
+venv
+
+# Local data (never ship student data in an image)
+**/data
+**/reports
+**/exports
+**/*.db
+**/*.db-journal
+
+# Tests are useful for CI, not for the runtime image
+Code6/student_performance_app/tests
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store

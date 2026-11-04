@@ -1,0 +1,100 @@
+name: CI
+
+# Runs on every push and pull request:
+#   1. the test suite on two Python versions
+#   2. a syntax/compile pass over every module
+#   3. the preflight readiness check (strict mode)
+#   4. a production image build + container smoke test
+
+on:
+  push:
+    branches: [main, "fix/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  APP_DIR: Code6/student_performance_app
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+
+  tests:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: ${{ env.APP_DIR }}/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Byte-compile every module
+        working-directory: ${{ env.APP_DIR }}
+        run: python -m compileall -q . && echo "compile OK"
+
+      - name: Run test suite
+        working-directory: ${{ env.APP_DIR }}
+        run: python -m pytest tests -q --maxfail=1
+
+      - name: Preflight (strict)
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          # A throwaway hash so strict mode passes in CI.
+          SPAS_ADMIN_PASSWORD_HASH: 5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8
+          SPAS_DB_PATH: ${{ github.workspace }}/ci-data/spas.db
+        run: python scripts/preflight.py --production
+
+  docker:
+    name: Docker build and smoke test
+    runs-on: ubuntu-latest
+    needs: tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t spas:ci .
+
+      - name: Start container
+        run: |
+          docker run -d --name spas-ci \
+            -p 8501:8501 \
+            -e SPAS_ADMIN_PASSWORD_HASH=5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8 \
+            -e SPAS_DB_PATH=/data/spas.db \
+            spas:ci
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8501/_stcore/health | grep -q ok; then
+              echo "healthy after ${i}s"; exit 0
+            fi
+            sleep 2
+          done
+          echo "container never became healthy"; docker logs spas-ci; exit 1
+
+      - name: Smoke test the deployment
+        run: |
+          docker exec spas-ci python scripts/smoke_test.py --url http://127.0.0.1:8501
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs spas-ci
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f spas-ci || true
