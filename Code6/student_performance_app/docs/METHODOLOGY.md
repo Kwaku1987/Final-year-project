@@ -110,7 +110,10 @@ warning that the UI displays. A genuine 0–100 column is left untouched.
 | Split | 80/20 hold-out, stratified, `random_state=42` |
 | Cross-validation | Stratified 5-fold, **training fold only** |
 | Scaling | `StandardScaler` fitted on the training fold; used by the linear models only |
-| Models | Logistic Regression, Random Forest (200 trees), soft-voting ensemble |
+| Models | Logistic Regression, Random Forest (200 trees), soft-voting ensemble, tuned Random Forest, calibrated Random Forest and calibrated Logistic Regression |
+| Hyperparameter search | `RandomizedSearchCV`, 8 candidates, scoring `f1_macro`, 3 folds — **training fold only** |
+| Calibration | `CalibratedClassifierCV` (sigmoid/Platt), 3 internal folds — **training fold only** |
+| Calibration quality | Brier score and expected calibration error (ECE) per model |
 | Selection | Highest macro F1 on the hold-out test set |
 
 ### Reported metrics, and why
@@ -127,11 +130,20 @@ warning that the UI displays. A genuine 0–100 column is left untouched.
 * **Baseline (majority class)** — the accuracy of always predicting the most
   common label. **Always compare accuracy with this, not with zero.**
 * **Lift over baseline** — accuracy − baseline.
+* **Brier score** — squared error of the probability vector; the number that
+  decides whether the confidence figure can be trusted.
+* **Expected calibration error (ECE)** — mean |confidence − accuracy| across
+  confidence bins.
 
-On a well-separated synthetic cohort with no leaked label, this pipeline reports
-roughly 0.8 accuracy against a 0.55 baseline with macro F1 ≈ 0.6 — a believable
-result for a noisy social-science problem. On pure-noise data it reports chance
-level (~0.33), which is the correct behaviour.
+On the documented 2,000-row synthetic cohort (`scripts/make_synthetic_dataset.py`),
+the selected model reports **0.655 accuracy / 0.653 macro F1 against a 0.335
+baseline**. On pure-noise data the same pipeline reports chance level (~0.33),
+which is the correct behaviour and the check that proves no leakage remains.
+
+Tuning and calibration are reported honestly even when they do not help: on the
+reference cohort both were neutral-to-slightly-negative (tuned forest 0.616 vs
+0.638 untuned, calibrated Brier 0.455 vs 0.451), and the write-up says so rather
+than quietly dropping the comparison.
 
 ---
 
@@ -179,7 +191,11 @@ families. The UI says so.
 6. **No fairness analysis.** Results are not disaggregated by gender, programme
    or entry qualification. Any deployment decision affecting students should be,
    and the model should not be used as the sole basis for one.
-7. **The 16.9 MB bundle in `models/` is the LEGACY model** trained on the
+7. **Calibration is not a performance gain.** Platt scaling can only rescale
+   confidence; it cannot add information, and on the reference cohort it slightly
+   increased Brier score and ECE. Whether to keep it is an empirical decision to
+   be made on the real cohort from Table 5.4 of the results chapter.
+8. **The 16.9 MB bundle in `models/` is the LEGACY model** trained on the
    circular CPI target (see `docs/MODEL_CARD.md`). It is kept so Assessment Mode
    can be demonstrated; retrain with `scripts/train_model.py` before quoting any
    number from it.
@@ -195,10 +211,16 @@ pip install -r requirements.txt
 python scripts/make_synthetic_dataset.py --rows 2000 --out data/synthetic_cohort.csv
 
 # retrain, evaluate, export the bundle + a metrics JSON
-python scripts/train_model.py --data data/synthetic_cohort.csv --out models/best_model.pkl
+python scripts/train_model.py --data data/synthetic_cohort.csv \
+       --out models/best_model.pkl --metrics reports/metrics.json
+
+# regenerate the report tables (comparison, per-class, confusion matrix, CV,
+# calibration quality, tuning summary, feature importance)
+python scripts/report_results.py --data data/synthetic_cohort.csv \
+       --out reports/results.md --json reports/results.json
 
 # verify the behaviour the pipeline claims
-python -m pytest tests -q
+python -m pytest tests -q      # 53 tests
 ```
 
 Every synthetic row is generated from an explicit, documented formula in

@@ -125,9 +125,13 @@ scores 0.90 accuracy on a target with a 0.90 majority class has learned nothing.
    `assignment_score` scale.
 3. Target definition chosen and justified (`exam_band` unless you can defend the
    legacy CPI framing), thresholds recorded.
-4. Metrics reported **with** baseline, macro F1, balanced accuracy and per-class
-   breakdown; ideally across semesters, not just a random split.
+4. Metrics reported **with** baseline, macro F1, balanced accuracy, per-class
+   breakdown, Brier score and ECE; ideally across semesters, not just a random
+   split. `scripts/report_results.py` produces them.
 5. Caveats verified in the interpretation report (`report.caveats`).
 6. `python -m pytest tests -q` green.
-7. This file updated: date, sample count, version pins, chosen model, metric
+7. Tuning and calibration decisions recorded — which search ran, which
+   configurations were compared, and whether calibration improved Brier/ECE on
+   this cohort (keep it only if it does).
+8. This file updated: date, sample count, version pins, chosen model, metric
    table, known limitations.

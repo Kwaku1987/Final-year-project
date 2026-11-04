@@ -10,9 +10,9 @@ role-based modes for an administrator (train) and a lecturer (assess), model
 persistence, per-student SHAP explanations, risk/intervention advice, and
 PDF/Excel reporting.
 
-![status](https://img.shields.io/badge/tests-44%20passing-brightgreen)
+![status](https://img.shields.io/badge/tests-53%20passing-brightgreen)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![licence](https://img.shields.io/badge/licence-unset-lightgrey)
+![licence](https://img.shields.io/badge/licence-MIT-green)
 
 ---
 
@@ -36,9 +36,9 @@ This version separates **what the label is** from **what the model may see**:
 * the old framing is still available (`SPAS_TARGET_DEFINITION=cpi`) but is
   labelled *rule reconstruction* everywhere it appears.
 
-The result is a believable **~63 % accuracy against a 33 % baseline** on
-separated synthetic data, and **chance-level accuracy on noise** — which is what
-an honest evaluation should show. Full reasoning, limitations and the
+The result is a believable **0.655 accuracy / 0.653 macro F1 against a 0.335
+baseline** on the documented synthetic cohort, and **chance-level accuracy on
+noise** — which is what an honest evaluation should show. Full reasoning, limitations and the
 reproduction steps: **[`docs/METHODOLOGY.md`](Code6/student_performance_app/docs/METHODOLOGY.md)**.
 
 ---
@@ -83,13 +83,13 @@ python scripts/train_model.py --data data/synthetic_cohort.csv \
 | Area | What it does |
 |---|---|
 | **Dataset** | CSV/XLSX upload, schema + range validation, column-alias mapping, automatic score-scale repair, missing/duplicate reporting, EDA (correlation, multicollinearity, outliers, target distribution) |
-| **Training** | Target building, stratified 80/20 split, scaling, Logistic Regression + Random Forest + soft-voting ensemble, 5-fold CV, model comparison with honest metrics, saved bundle |
-| **Prediction** | Single-student prediction with class probabilities, SHAP per-student explanation, intervention priority with stated reasons, PDF report |
+| **Training** | Target building, stratified 80/20 split, scaling, six candidate models (Logistic Regression, Random Forest, soft-voting ensemble, tuned forest, calibrated forest and calibrated logistic regression), 5-fold CV, `RandomizedSearchCV` hyperparameter search, sigmoid probability calibration, model comparison with honest metrics, saved bundle |
+| **Prediction** | Single-student prediction with class probabilities (calibrated where selected), SHAP per-student explanation, intervention priority with stated reasons, PDF report |
 | **Batch** | Whole-roster CSV/XLSX prediction with risk columns, CSV export |
 | **Explainable AI** | Global feature importance (coefficients / Gini), plain-English insights, recommendations, methodology caveats |
 | **Assessment Mode** | Lecturer workflow: load the saved model, assess by name/ID, history, PDF |
 | **Reports** | PDF student report, Excel batch report |
-| **Governance** | Password-gated Training Mode, single-source config, model card, version guard on load |
+| **Governance** | Password-gated Training Mode, single-source config, model card, version guard on load, MIT licence |
 
 ### Two questions, two explanations
 
@@ -127,8 +127,9 @@ Code6/student_performance_app/
 │   └── eda/                      exploratory analysis (wired into the UI)
 ├── components/sidebar.py
 ├── utils/                        auth (password gate), theme
-├── scripts/                      synthetic data generator, CLI trainer
-├── tests/                        40 pytest tests
+├── scripts/                      synthetic data generator, CLI trainer,
+│                                  results-table generator
+├── tests/                        53 pytest tests
 └── docs/                         METHODOLOGY · MODEL_CARD · DATA_PROTECTION
 ```
 
@@ -141,11 +142,13 @@ object, with **one shared config** so no component invents its own schema.
 ## Tests
 
 ```bash
-python -m pytest tests -q          # 44 passed
+python -m pytest tests -q          # 53 passed
 ```
 
 The suite encodes the fixes: the label source is never a predictor, labels are
-balanced, the 0–20 assignment scale is repaired, metrics carry a baseline,
+balanced, the 0–20 assignment scale is repaired, metrics carry a baseline and
+calibration quality (Brier, ECE), search and calibration never touch the test
+fold,
 interventions always state a reason, bundles round-trip their contract, and a
 version-mismatched bundle fails with a readable message instead of a traceback.
 
@@ -156,6 +159,7 @@ version-mismatched bundle fails with a readable message instead of a traceback.
 * [`docs/METHODOLOGY.md`](Code6/student_performance_app/docs/METHODOLOGY.md) — target design, evaluation protocol, limitations
 * [`docs/MODEL_CARD.md`](Code6/student_performance_app/docs/MODEL_CARD.md) — what the shipped model is, and what it must not be used for
 * [`docs/DATA_PROTECTION.md`](Code6/student_performance_app/docs/DATA_PROTECTION.md) — access control and Act 843 obligations
+* [`docs/REPORT_CHAPTER_RESULTS_AND_DISCUSSION.md`](Code6/student_performance_app/docs/REPORT_CHAPTER_RESULTS_AND_DISCUSSION.md) — draft Results & Discussion chapter, tables generated by script
 * [`CHANGELOG.md`](CHANGELOG.md) — what changed in this revision and why
 
 ---
@@ -171,8 +175,8 @@ should be retrained before any number from it is quoted.
 
 ## Licence
 
-Not yet set. Until a licence is chosen, the default is **all rights reserved** —
-add one (MIT or Apache-2.0 are the usual choices for coursework released
-publicly) before others can reuse this code.
+**MIT** — see [`LICENSE`](LICENSE). The licence covers the source code only; it
+grants no rights over student data and does not remove the obligations of
+Ghana's Data Protection Act, 2012 (Act 843).
 
 **Author:** Brenya Kwaku Twum · GitHub [@Kwaku1987](https://github.com/Kwaku1987)

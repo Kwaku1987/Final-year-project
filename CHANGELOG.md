@@ -6,6 +6,61 @@ All notable changes to this project. Format loosely follows
 
 ---
 
+## [3.1] — 2026-11-04 — "Search, calibration, and a results chapter"
+
+Closes out the remaining items from the code review: the two model-quality
+gaps (untuned models, untrustworthy confidence) and the missing academic
+deliverables (results chapter, licence).
+
+### Added
+
+* **Hyperparameter search** (`ModelTrainer.tune_model`): `RandomizedSearchCV`
+  over a documented grid, scoring macro F1, 3 folds, **training fold only**.
+  Adds "Random Forest (Tuned)" as a candidate; the chosen configuration and
+  search summary are recorded in the bundle and shown in the UI.
+* **Probability calibration** (`ModelTrainer.train_calibrated`):
+  `CalibratedClassifierCV` (sigmoid/Platt) for both Random Forest and Logistic
+  Regression, each carrying its own preprocessing. Fixes the credibility problem
+  where the two models disagreed wildly on borderline students (High at 100 %
+  versus Average at 63 %) and no confidence figure was interpretable.
+* **Calibration quality metrics**: multiclass **Brier score** and **expected
+  calibration error (ECE)** in `ModelEvaluator`, so "is this confidence
+  trustworthy?" is measured rather than assumed.
+* **`scripts/report_results.py`**: generates the report tables (comparison,
+  per-class, confusion matrix, CV, calibration quality, tuning summary, feature
+  importance, caveats) as Markdown + JSON, so figures are never transcribed by
+  hand.
+* **`docs/REPORT_CHAPTER_RESULTS_AND_DISCUSSION.md`**: a complete draft Chapter 5
+  with ten numbered tables, threats-to-validity analysis and the v2.0-vs-v3.0
+  comparison. Every number is produced by the script above and labelled with its
+  cohort.
+* **MIT `LICENSE`** (source code only; student data explicitly excluded).
+* Tests for tuning and calibration (53 tests total), including a check that the
+  search cannot see the hold-out fold.
+
+### Fixed
+
+* **Interpreting calibrated wrappers.** `CalibratedClassifierCV` exposes neither
+  `coef_` nor `feature_importances_`, so the report and the per-prediction
+  explanation failed for calibrated models. The interpreter and SHAP explainer
+  now unwrap `calibrated_classifiers_` to the base estimator.
+* **SHAP with the new Explainer API.** Newer SHAP objects have `.values` rather
+  than `.shap_values()`, which silently disabled instance explanations. Both APIs
+  are now supported.
+* **Scaling flags for wrapped models.** Calibrated wrappers are recorded as
+  `requires_scaling=False` (they preprocess internally), consistent with
+  Pipeline handling.
+
+### Notes on honesty
+
+On the reference synthetic cohort, tuning and calibration did **not** improve
+the result (tuned forest 0.616 vs 0.638 untuned macro F1; calibrated Brier 0.455
+vs 0.451). Both are reported with the evidence in the results chapter rather
+than dropped, because a pipeline that can only report improvements is not
+measuring anything.
+
+---
+
 ## [3.0] — 2026-11-04 — "Make the evaluation honest"
 
 This release is mostly about **one methodological problem** and the six
