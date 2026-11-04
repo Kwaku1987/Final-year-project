@@ -1,0 +1,54 @@
+# ============================================================
+# Student Performance Assessment System -- Render blueprint
+# ============================================================
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repo.
+# Render reads this file, builds the Dockerfile and creates the service.
+#
+# Free-tier reality (checked against render.com/docs/free, Oct 2026):
+#   * 512 MB RAM / 0.1 CPU, spins down after 15 min idle (~1 min cold start)
+#   * no persistent disk -- the filesystem is wiped on every deploy,
+#     restart AND spin-down, so SQLite history cannot survive
+#   * 750 instance hours and 5 GB bandwidth per month
+#
+# What that means for this app, measured rather than guessed:
+#   * Assessment Mode is ~402 MB once the 6-model bundle is loaded --
+#     it fits in 512 MB, with little headroom.
+#   * Training Mode peaks around 750 MB inside a running server and
+#     will be OOM-killed, and at 0.1 CPU a 33 s training run becomes
+#     minutes. Train locally or on a machine with >= 1 GB; do not train
+#     on the free instance.
+# ============================================================
+
+services:
+  - type: web
+    name: student-performance
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    # Closest region to Ghana; change if you are deploying elsewhere.
+    region: frankfurt
+    healthCheckPath: /_stcore/health
+    autoDeploy: true
+    envVars:
+      # Set in the Render dashboard (Environment tab). Never commit it.
+      # Generate: python -m utils.auth hash "your-password"
+      - key: SPAS_ADMIN_PASSWORD_HASH
+        sync: false
+
+      # No persistent disk on the free plan: keep the app stateless so
+      # it degrades honestly instead of pretending to store history.
+      - key: SPAS_DB_ENABLED
+        value: "0"
+
+      # Production target definition. "cpi" is refused by design:
+      # it is computed from the predictors and is a rule-reconstruction
+      # baseline, not a predictive target.
+      - key: SPAS_TARGET_DEFINITION
+        value: exam_band
+
+      - key: SPAS_LABEL_METHOD
+        value: quantile
+
+      - key: PYTHONUNBUFFERED
+        value: "1"

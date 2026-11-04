@@ -143,7 +143,59 @@ Three deliberate choices in that command:
   bad save cannot corrupt the released model. Save new bundles through a
   controlled retrain (§8) instead.
 
-### 4.3 Compose (the normal path)
+### 4.3 Render (free tier)
+
+Render can host this image on its free plan, and the repository ships a
+`render.yaml` blueprint for it. It is a good fit for a **public demo of
+Assessment Mode** and a poor fit for Training Mode — the numbers, measured on the
+real app rather than estimated:
+
+| Stage | Peak RSS |
+|---|---|
+| Bare Python | 9 MB |
+| + Streamlit, pandas, scikit-learn, matplotlib, xgboost, shap | 299 MB |
+| + the 6-model bundle loaded (idle, serving) | **402 MB** |
+| + one assessment with SHAP | 403 MB |
+| Training Mode, run in isolation | 347 MB |
+| Training Mode inside the running server | ~750 MB → **OOM** |
+
+Free plan limits (render.com/docs/free, Oct 2026): **512 MB RAM / 0.1 CPU**, spin
+down after 15 minutes idle (~1 min cold start), 5 GB bandwidth and 750 instance
+hours per month, **no persistent disk** — the filesystem is wiped on every
+deploy, restart and spin-down.
+
+**Deploy**
+
+1. Render dashboard → *New* → *Blueprint* → select this repository. Render reads
+   `render.yaml`, builds the root `Dockerfile` and creates a free web service in
+   `frankfurt` (change `region` if that is wrong for you).
+2. When prompted, set `SPAS_ADMIN_PASSWORD_HASH` (dashboard → *Environment*).
+   Generate it with `python -m utils.auth hash "your-password"`. It is marked
+   `sync: false` in the blueprint, so it is never read from git.
+3. Wait for the first build (~3–5 min), then check the health path
+   `/_stcore/health` returns `ok`.
+4. Verify from your machine:
+
+   ```bash
+   python scripts/smoke_test.py --url https://<your-service>.onrender.com
+   ```
+
+**What you must accept on the free plan**
+
+* **History is not stored.** `render.yaml` sets `SPAS_DB_ENABLED=0`, so the
+  Assessment page reports session-only history instead of pretending to save.
+  Enabling it would write to a filesystem that is destroyed on the next spin-down.
+* **Cold starts.** First visit after 15 idle minutes waits ~1 minute.
+* **No Training Mode.** It will be killed at 512 MB, and at 0.1 CPU a 33-second
+  training run takes minutes. Train locally, commit the bundle, and let Render
+  serve it — that ordering also matches how you would ship a model to production.
+* **Only one model file.** `best_model.pkl` is baked into the image (9.9 MB).
+  Saving a new model from the app writes to an ephemeral layer and disappears.
+
+Anything that needs a disk, a shell or steady CPU (the audit trail, retraining,
+backups) belongs on the compose stack in §4.4 or a small VPS (§6).
+
+### 4.4 Compose (the normal path)
 
 ```bash
 cp .env.example .env

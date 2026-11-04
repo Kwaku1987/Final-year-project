@@ -191,9 +191,14 @@ The stack is a `python:3.12-slim` image running as uid 10001, a healthcheck on
 mounted read-only so a bad save cannot overwrite the released model. It binds to
 `127.0.0.1` — a TLS reverse proxy belongs in front of it.
 
-Full runbook (local, Docker, compose, Nginx/Caddy TLS, backup and restore of the
-database, retraining, rollback, Act 843 duties, troubleshooting):
-**[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
+Full runbook (local, Docker, compose, Render free tier, Nginx/Caddy TLS, backup
+and restore of the database, retraining, rollback, Act 843 duties,
+troubleshooting): **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
+
+The image honours `$PORT`, so it runs unmodified on Render, Cloud Run, Railway or
+Fly as well as on compose. A free-tier Render blueprint is included
+([`render.yaml`](render.yaml)) — good for a public Assessment-Mode demo; training
+needs ≥ 1 GB of RAM and belongs on the compose stack or a small VPS.
 
 > ⚠️ Deployment-ready is not the same as fit to serve students. Five items
 > remain, and they are decisions rather than code: real-cohort retraining, the

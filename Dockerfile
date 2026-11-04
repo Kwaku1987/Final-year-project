@@ -57,15 +57,21 @@ RUN groupadd --gid 10001 app \
 USER app
 
 # --- health check --------------------------------------------
-# Uses the stdlib so the image needs no curl/wget.
+# Uses the stdlib so the image needs no curl/wget, and honours $PORT
+# so it still works on a platform that assigns one (Render, Cloud Run,
+# Railway, Fly). Defaults to 8501 locally.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD python -c "import urllib.request,sys; \
-sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=4).read().strip()==b'ok' else 1)"
+    CMD python -c "import os,urllib.request,sys; \
+port=os.environ.get('PORT','8501'); \
+sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+port+'/_stcore/health', timeout=4).read().strip()==b'ok' else 1)"
 
 EXPOSE 8501
 
 # Streamlit serves its own HTTP/WebSocket stack; no gunicorn needed.
-CMD ["streamlit", "run", "app.py", \
-     "--server.port=8501", \
-     "--server.address=0.0.0.0", \
-     "--server.headless=true"]
+#
+# PORT handling: platforms such as Render, Cloud Run, Railway and Fly
+# inject $PORT and route traffic only to it. `exec` replaces the shell
+# so SIGTERM still reaches Streamlit and shutdown stays graceful.
+# Docker Compose / plain `docker run` set no PORT, so it falls back to
+# 8501 and the existing port mapping keeps working unchanged.
+CMD ["sh", "-c", "exec streamlit run app.py --server.port=${PORT:-8501} --server.address=0.0.0.0 --server.headless=true"]

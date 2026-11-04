@@ -6,6 +6,27 @@ All notable changes to this project. Format loosely follows
 
 ---
 
+## [3.3.2] — 2026-11-04 — "Portable port, Render blueprint"
+
+* **The image honours `$PORT`.** Render, Cloud Run, Railway and Fly inject a port
+  and route traffic only to it; the `CMD` hardcoded 8501, so the container would
+  have built and then been marked unhealthy. The `CMD` is now
+  `sh -c "exec streamlit run app.py --server.port=${PORT:-8501} ..."` — `exec`
+  keeps SIGTERM reaching Streamlit, and with no `PORT` set the default is
+  unchanged, so compose and plain `docker run` behave exactly as before. The
+  `HEALTHCHECK` honours `$PORT` for the same reason. Verified by running the
+  exact command with `PORT=8599`: it listened there and `/_stcore/health`
+  returned `ok`.
+* **`render.yaml`**: one-click free-tier blueprint (Docker runtime, health path
+  `/_stcore/health`, `SPAS_DB_ENABLED=0` because free Render has no persistent
+  disk, password hash marked `sync: false` so it is never read from git).
+* **`docs/DEPLOYMENT.md` §4.3** documents the measured memory profile against
+  Render's 512 MB limit: 402 MB idle serving the bundle, ~750 MB during a
+  training run. Assessment Mode fits; Training Mode does not, and the guide says
+  so instead of letting an OOM kill explain it.
+
+---
+
 ## [3.3.1] — 2026-11-04 — "Enforcement pass"
 
 The 3.1–3.3 standards were documented and mostly implemented; several of them
