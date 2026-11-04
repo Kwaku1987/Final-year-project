@@ -88,6 +88,14 @@ class InterpretationReport:
         default_factory=dict
     )
 
+    # Methodology caveats attached by the framework (e.g. "the
+    # target is computed from the predictors, so these scores
+    # measure rule reconstruction"). Shown in the UI and the
+    # exported reports so results are never read out of context.
+    caveats: List[str] = field(
+        default_factory=list
+    )
+
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert the report into a serializable dictionary.
@@ -111,6 +119,7 @@ class InterpretationReport:
                 self.executive_summary
             ),
             "metadata": self.metadata,
+            "caveats": self.caveats,
         }
 
 
@@ -347,6 +356,100 @@ class ModelInterpreter:
         """
 
         names = list(feature_names)
+
+        # ----------------------------------------------------
+        # Pipelines (v3.0)
+        # ----------------------------------------------------
+        # A Pipeline exposes neither coef_ nor
+        # feature_importances_ (they live on its final step), so
+        # unwrap it. Coefficients are then in *scaled* units,
+        # which is what the model actually learned.
+        # ----------------------------------------------------
+        steps = getattr(model, "steps", None)
+
+        if steps:
+
+            logger.info(
+                "Interpreting pipeline %s via its final step.",
+                type(model).__name__,
+            )
+
+            table = self.extract_feature_importance(
+                steps[-1][1],
+                names,
+            )
+
+            table["importance_method"] = (
+                f"{table['importance_method'].iloc[0]}"
+                " (pipeline final step)"
+            )
+
+            return table
+
+        # ----------------------------------------------------
+        # Meta-estimators (v3.0)
+        # ----------------------------------------------------
+        # A VotingClassifier exposes neither coef_ nor
+        # feature_importances_, so interpreting it used to raise
+        # ValueError and break the whole report whenever the
+        # ensemble won model selection. Delegate to its first
+        # member that can explain itself (the linear branch) and
+        # record that in the method name, rather than pretending
+        # to explain the ensemble as a whole.
+        # ----------------------------------------------------
+        if not hasattr(model, "coef_") and not hasattr(
+            model, "feature_importances_"
+        ):
+
+            for attribute in (
+                "named_estimators_",
+                "estimators_",
+            ):
+
+                members = getattr(model, attribute, None)
+
+                if members is None:
+                    continue
+
+                if isinstance(members, dict):
+
+                    candidates = list(members.values())
+
+                    labels = list(members.keys())
+
+                else:
+
+                    candidates = list(members)
+
+                    labels = [
+                        f"estimator_{index}"
+                        for index in range(len(candidates))
+                    ]
+
+                for label, candidate in zip(labels, candidates):
+
+                    if hasattr(candidate, "coef_") or hasattr(
+                        candidate, "feature_importances_"
+                    ):
+
+                        logger.info(
+                            "Interpreting ensemble %s via its "
+                            "'%s' member.",
+                            type(model).__name__,
+                            label,
+                        )
+
+                        table = self.extract_feature_importance(
+                            candidate,
+                            names,
+                        )
+
+                        table["importance_method"] = (
+                            f"{table['importance_method'].iloc[0]}"
+                            f" (via ensemble member '{label}')"
+                        )
+
+                        return table
 
         if hasattr(
             model,

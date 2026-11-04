@@ -48,6 +48,7 @@ from backend.config import (
     FEATURE_COLUMNS,
     PERFORMANCE_LABELS,
     PERFORMANCE_MAPPING,
+    PREDICTOR_COLUMNS,
     RANDOM_STATE,
     STRATIFY,
     TARGET_COLUMN,
@@ -58,13 +59,35 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# LOGGING SHIM
+# ============================================================
+# This module was written notebook-style, with _report() calls.
+# Inside a Streamlit server those go to the terminal and are
+# invisible to the user, so they are routed through logging
+# instead -- one log record per former _report().
+# ============================================================
+
+def _report(*args) -> None:
+    """Log what used to be printed (keeps notebook-era output)."""
+    logger.info(" ".join(str(a) for a in args))
+
+
+
+# ============================================================
 # FEATURE ENGINEER
 # ============================================================
 
 class FeatureEngineer:
 
-    def __init__(self, df):
+    def __init__(self, df, predictor_columns=None):
         self.df = df.copy()
+
+        # Predictors come from backend/config.py, which excludes
+        # the column the target is derived from -- a model must
+        # never be trained on the source of its own label.
+        self.predictor_columns = list(
+            predictor_columns or PREDICTOR_COLUMNS
+        )
 
     # -------------------------------------------------------
     # MODULE 1 : FEATURE / TARGET SELECTION
@@ -78,11 +101,26 @@ class FeatureEngineer:
 
         logger.info("Starting feature selection...")
 
-        X = self.df[FEATURE_COLUMNS].copy()
+        missing = [
+            column
+            for column in self.predictor_columns
+            if column not in self.df.columns
+        ]
+
+        if missing:
+            raise ValueError(
+                f"Missing predictor columns: {missing}"
+            )
+
+        X = self.df[self.predictor_columns].copy()
 
         y = self.df[TARGET_COLUMN].copy()
 
-        logger.info("Feature selection completed.")
+        logger.info(
+            "Feature selection completed: %d predictors (%s).",
+            len(self.predictor_columns),
+            ", ".join(self.predictor_columns),
+        )
 
         return X, y
 
@@ -143,24 +181,24 @@ class FeatureEngineer:
         y_train = split_data["y_train"]
         y_test = split_data["y_test"]
 
-        print("\n" + "=" * 60)
-        print("TRAIN / TEST SPLIT SUMMARY")
-        print("=" * 60)
+        _report("\n" + "=" * 60)
+        _report("TRAIN / TEST SPLIT SUMMARY")
+        _report("=" * 60)
 
-        print(f"Training Samples : {len(X_train)}")
-        print(f"Testing Samples  : {len(X_test)}")
+        _report(f"Training Samples : {len(X_train)}")
+        _report(f"Testing Samples  : {len(X_test)}")
 
-        print("\nTraining Shape")
-        print(X_train.shape)
+        _report("\nTraining Shape")
+        _report(X_train.shape)
 
-        print("\nTesting Shape")
-        print(X_test.shape)
+        _report("\nTesting Shape")
+        _report(X_test.shape)
 
-        print("\nTraining Class Distribution")
-        print(y_train.value_counts(normalize=True).round(3))
+        _report("\nTraining Class Distribution")
+        _report(y_train.value_counts(normalize=True).round(3))
 
-        print("\nTesting Class Distribution")
-        print(y_test.value_counts(normalize=True).round(3))
+        _report("\nTesting Class Distribution")
+        _report(y_test.value_counts(normalize=True).round(3))
 
         logger.info("Train/test split validated.")
 
@@ -226,17 +264,17 @@ class FeatureEngineer:
 
         X_train = scaled_data["X_train_scaled"]
 
-        print("\n" + "=" * 60)
-        print("FEATURE SCALING SUMMARY")
-        print("=" * 60)
+        _report("\n" + "=" * 60)
+        _report("FEATURE SCALING SUMMARY")
+        _report("=" * 60)
 
-        print("Means")
+        _report("Means")
 
-        print(X_train.mean().round(3))
+        _report(X_train.mean().round(3))
 
-        print("\nStandard Deviations")
+        _report("\nStandard Deviations")
 
-        print(X_train.std().round(3))
+        _report(X_train.std().round(3))
 
         logger.info("Scaling validation completed.")
 
@@ -294,16 +332,16 @@ class FeatureEngineer:
 
         logger.info("Validating target encoding...")
 
-        print("\n" + "=" * 60)
-        print("TARGET LABEL ENCODING")
-        print("=" * 60)
+        _report("\n" + "=" * 60)
+        _report("TARGET LABEL ENCODING")
+        _report("=" * 60)
 
         for label, code in PERFORMANCE_MAPPING.items():
-            print(f"{label:<10} -> {code}")
+            _report(f"{label:<10} -> {code}")
 
-        print("\nEncoded Training Labels")
+        _report("\nEncoded Training Labels")
 
-        print(encoded_data["y_train"].head())
+        _report(encoded_data["y_train"].head())
 
         logger.info("Encoding validation completed.")
 

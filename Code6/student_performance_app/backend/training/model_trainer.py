@@ -93,11 +93,19 @@ from sklearn.ensemble import (
 
 from sklearn.ensemble import (
     GradientBoostingClassifier,
+    VotingClassifier,
+)
+
+from sklearn.model_selection import (
+    StratifiedKFold,
+    cross_val_score as _sk_cross_val_score,
 )
 
 from backend.preprocessing.target_encoder import (
     TargetEncoder,
 )
+
+from backend.config import CV_FOLDS
 
 # ------------------------------------------------------------
 # Optional XGBoost
@@ -256,6 +264,195 @@ class ModelTrainer:
         )
 
         return model
+
+    # -------------------------------------------------------
+
+    def train_ensemble(self, prepared_data: dict):
+        """
+        Train a soft-voting ensemble of Logistic Regression and
+        Random Forest.
+
+        The two base models disagree on borderline students (they
+        are calibrated differently), so a probability-averaging
+        ensemble is a cheap, explainable way to stabilise
+        predictions.
+
+        The Logistic Regression branch carries its own
+        StandardScaler inside a Pipeline, so the ensemble as a
+        whole consumes UNSCALED features -- which is why
+        framework.py records requires_scaling=False for it.
+        """
+
+        logger.info("Training Soft-Voting Ensemble...")
+
+        start_time = time.perf_counter()
+
+        logistic_branch = Pipeline(
+            steps=[
+                ("scaler", StandardScaler()),
+                (
+                    "classifier",
+                    LogisticRegression(
+                        random_state=self.random_state,
+                        max_iter=1000,
+                        solver="lbfgs",
+                    ),
+                ),
+            ]
+        )
+
+        random_forest_branch = RandomForestClassifier(
+            n_estimators=200,
+            random_state=self.random_state,
+            n_jobs=-1,
+        )
+
+        model = VotingClassifier(
+            estimators=[
+                ("logistic_regression", logistic_branch),
+                ("random_forest", random_forest_branch),
+            ],
+            voting="soft",
+        )
+
+        model.fit(
+            prepared_data["X_train_original"],
+            prepared_data["y_train"],
+        )
+
+        elapsed = time.perf_counter() - start_time
+
+        logger.info(
+            "Soft-Voting Ensemble trained in %.3f seconds.",
+            elapsed,
+        )
+
+        return model
+
+    # -------------------------------------------------------
+
+    def cross_validate_model(
+        self,
+        prepared_data: dict,
+        model_name: str = "Logistic Regression",
+        cv: int = CV_FOLDS,
+    ) -> Dict[str, float]:
+        """
+        Cross-validate a model configuration on the TRAINING fold
+        only (the test fold stays untouched for the reported
+        metrics).
+
+        Returns
+        -------
+        dict
+            {"mean_accuracy", "std_accuracy", "folds"}
+        """
+
+        X_train, y_train = self._cv_data_for(
+            prepared_data,
+            model_name,
+        )
+
+        if model_name == "Logistic Regression":
+
+            estimator = Pipeline(
+                steps=[
+                    ("scaler", StandardScaler()),
+                    (
+                        "classifier",
+                        LogisticRegression(
+                            random_state=self.random_state,
+                            max_iter=1000,
+                            solver="lbfgs",
+                        ),
+                    ),
+                ]
+            )
+
+        elif model_name == "Soft-Voting Ensemble":
+
+            estimator = VotingClassifier(
+                estimators=[
+                    (
+                        "logistic_regression",
+                        Pipeline(
+                            steps=[
+                                ("scaler", StandardScaler()),
+                                (
+                                    "classifier",
+                                    LogisticRegression(
+                                        random_state=self.random_state,
+                                        max_iter=1000,
+                                        solver="lbfgs",
+                                    ),
+                                ),
+                            ]
+                        ),
+                    ),
+                    (
+                        "random_forest",
+                        RandomForestClassifier(
+                            n_estimators=200,
+                            random_state=self.random_state,
+                            n_jobs=-1,
+                        ),
+                    ),
+                ],
+                voting="soft",
+            )
+
+        else:
+
+            estimator = RandomForestClassifier(
+                n_estimators=200,
+                random_state=self.random_state,
+                n_jobs=-1,
+            )
+
+        splitter = StratifiedKFold(
+            n_splits=cv,
+            shuffle=True,
+            random_state=self.random_state,
+        )
+
+        scores = _sk_cross_val_score(
+            estimator,
+            X_train,
+            y_train,
+            cv=splitter,
+            scoring="accuracy",
+            n_jobs=-1,
+        )
+
+        return {
+            "mean_accuracy": float(np.mean(scores)),
+            "std_accuracy": float(np.std(scores)),
+            "folds": cv,
+        }
+
+    # -------------------------------------------------------
+
+    @staticmethod
+    def _cv_data_for(prepared_data: dict, model_name: str):
+        """
+        Return the training fold a given model should be
+        cross-validated on: scaled features for the plain
+        Logistic Regression, original features for everything
+        else (each of those fits its own internal scaler where
+        needed).
+        """
+
+        if model_name == "Logistic Regression":
+
+            return (
+                prepared_data["X_train_scaled"],
+                prepared_data["y_train"],
+            )
+
+        return (
+            prepared_data["X_train_original"],
+            prepared_data["y_train"],
+        )
 
     # =======================================================
     # FULL PIPELINE : TRAIN ALL SUPPORTED MODELS

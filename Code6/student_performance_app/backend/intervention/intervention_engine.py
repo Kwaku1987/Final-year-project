@@ -199,9 +199,17 @@ class InterventionEngine:
 
             score += 30
 
+            reasons.append(
+                "Model predicts Low academic performance"
+            )
+
         elif prediction == "Average":
 
             score += 10
+
+            reasons.append(
+                "Model predicts only Average academic performance"
+            )
 
         # ------------------------------------------------
         # Confidence -- normalize to a 0-100 scale first,
@@ -219,6 +227,11 @@ class InterventionEngine:
         if confidence_percent > 90:
 
             score += 10
+
+            reasons.append(
+                f"Model is highly confident in this prediction "
+                f"({confidence_percent:.0f}%)"
+            )
 
         # ------------------------------------------------
         # Priority tier
@@ -284,6 +297,11 @@ class InterventionEngine:
 
                 message="Continue current learning strategy.",
 
-                reasons=reasons,
+                # No individual factor crossed a risk threshold --
+                # say so explicitly rather than returning an empty
+                # list, which reads like a bug in the UI.
+                reasons=reasons or [
+                    "No individual risk factor crossed a threshold"
+                ],
 
             )

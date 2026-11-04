@@ -42,6 +42,7 @@ import pandas as pd
 from backend.config import (
     PERFORMANCE_LABELS,
     PERFORMANCE_MAPPING,
+    PREDICTOR_COLUMNS,
 )
 
 from backend.preprocessing.feature_engineer import FeatureEngineer
@@ -60,9 +61,13 @@ class DataPreparationPipeline:
     before model training.
     """
 
-    def __init__(self):
+    def __init__(self, predictor_columns=None):
 
         self.target_encoder = TargetEncoder()
+
+        self.predictor_columns = list(
+            predictor_columns or PREDICTOR_COLUMNS
+        )
 
         logger.info(
             "Data Preparation Pipeline initialized."
@@ -87,7 +92,10 @@ class DataPreparationPipeline:
             "Starting complete data preparation..."
         )
 
-        feature_engineer = FeatureEngineer(dataframe)
+        feature_engineer = FeatureEngineer(
+            dataframe,
+            predictor_columns=self.predictor_columns,
+        )
 
         # ---------------------------------
         # Module 1 : feature / target selection
@@ -158,6 +166,9 @@ class DataPreparationPipeline:
 
             "feature_names":
                 scaled_data["feature_names"],
+
+            "predictor_columns":
+                list(self.predictor_columns),
 
             "mapping": PERFORMANCE_MAPPING,
 

@@ -1,0 +1,68 @@
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ============================================================
+# Environments
+# ============================================================
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ============================================================
+# Testing / tooling caches
+# ============================================================
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ============================================================
+# Streamlit
+# ============================================================
+.streamlit/secrets.toml
+
+# ============================================================
+# Generated artefacts
+# ============================================================
+# Trained model bundles are build outputs. The one committed to
+# this repo is kept deliberately (the lecturer demo needs it),
+# but any NEW bundle should not be committed -- retrain instead
+# (scripts/train_model.py).
+models/*.pkl
+!models/best_model.pkl
+*.log
+reports/
+exports/
+
+# ============================================================
+# OS / editor
+# ============================================================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

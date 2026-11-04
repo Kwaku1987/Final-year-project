@@ -1,9 +1,42 @@
-streamlit
-pandas
-numpy
-scikit-learn
-matplotlib
-xgboost
-joblib
-openpyxl
-reportlab
+# ============================================================
+# Student Performance Assessment System -- pinned dependencies
+# ============================================================
+# These are EXACT pins, not ranges. Two reasons:
+#
+#  1. models/best_model.pkl is a Python pickle written by
+#     scikit-learn 1.9.x. Loading it with an older scikit-learn
+#     raises AttributeError ('LogisticRegression' object has no
+#     attribute 'multi_class') -- see docs/MODEL_CARD.md.
+#  2. A final-year project must be reproducible by an examiner
+#     on a fresh machine. Unpinned dependencies are not.
+#
+# Install:
+#     python -m venv .venv && source .venv/bin/activate
+#     pip install -r requirements.txt
+#
+# If you retrain the model in your own environment, re-pin these
+# to whatever you actually used and update docs/MODEL_CARD.md.
+# ============================================================
+
+# --- application ------------------------------------------------
+streamlit==1.66.1
+
+# --- data -------------------------------------------------------
+pandas==2.2.3
+numpy==2.3.5
+
+# --- machine learning -------------------------------------------
+scikit-learn==1.9.1
+xgboost==3.4.1
+joblib==1.5.3
+
+# --- explanation (instance-level SHAP attributions) -------------
+shap==0.54.1
+
+# --- reporting --------------------------------------------------
+matplotlib==3.11.2
+openpyxl==3.1.5
+reportlab==5.1.0
+
+# --- testing ----------------------------------------------------
+pytest==9.0.3

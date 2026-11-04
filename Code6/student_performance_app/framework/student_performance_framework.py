@@ -25,6 +25,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+import sys
+
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
@@ -43,9 +45,20 @@ from backend.intervention.intervention_engine import (
     InterventionEngine,
 )
 
+from backend.interpretation.shap_explainer import (
+    ShapExplainer,
+)
+
 from backend.config import (
     FEATURE_COLUMNS as _CONFIG_FEATURE_COLUMNS,
+    LABEL_POLICY,
+    PREDICTOR_COLUMNS,
+    TARGET_DEFINITION,
+    TARGET_DESCRIPTIONS,
+    is_leaky_definition,
 )
+
+import sklearn
 
 
 logger = logging.getLogger(__name__)
@@ -88,6 +101,12 @@ class PredictionResult:
         default_factory=list
     )
 
+    # SHAP contributions for THIS student (feature, value,
+    # signed contribution, direction). None when SHAP is not
+    # installed or the model type is unsupported -- callers then
+    # fall back to top_features (global importance).
+    instance_explanation: Optional[list] = None
+
     # Academic risk score/priority for this student, from
     # InterventionEngine. None if intervention assessment
     # wasn't available.
@@ -123,6 +142,9 @@ class PredictionResult:
             ),
             "top_features": (
                 self.top_features
+            ),
+            "instance_explanation": (
+                self.instance_explanation
             ),
             "intervention": (
                 self.intervention
@@ -189,7 +211,7 @@ class StudentPerformanceFramework:
 
     # Bumped when the saved model bundle's structure changes in
     # a way that matters for consumers reading model_version.
-    MODEL_BUNDLE_VERSION = "6.0"
+    MODEL_BUNDLE_VERSION = "7.0"
 
     def __init__(
         self,
@@ -262,10 +284,39 @@ class StudentPerformanceFramework:
             or self.DEFAULT_LABEL_MAPPING.copy()
         )
 
+        # Predictors only -- never the column the target is
+        # derived from (see backend/config.py). Callers can still
+        # override for custom schemas.
         self.required_features = list(
             required_features
-            or self.REQUIRED_FEATURES
+            or PREDICTOR_COLUMNS
         )
+
+        # Active target definition ("exam_band" | "cpi").
+        self.target_definition = TARGET_DEFINITION
+
+        # Machine-readable description of the target actually
+        # built (thresholds, method, class distribution).
+        self.target_description: Optional[Dict[str, Any]] = None
+
+        # Validation warnings surfaced from DatasetValidator, so
+        # the UI can show them instead of losing them to stdout.
+        self.validator_warnings: list[str] = []
+
+        # Per-model scaling requirements.
+        self.model_requires_scaling: Dict[str, bool] = {}
+
+        # Cross-validation results per model.
+        self.cross_validation: Dict[str, Dict[str, float]] = {}
+
+        # True when the loaded bundle predates v3.0.
+        self.legacy_bundle = False
+
+        # Instance-level (SHAP) explanations, plus the sample of
+        # training rows they are measured against.
+        self.shap_explainer = ShapExplainer()
+
+        self.explanation_background: Optional[pd.DataFrame] = None
 
         # Runtime state
         self.raw_data: Optional[
@@ -362,6 +413,18 @@ class StudentPerformanceFramework:
             dataframe.copy()
         )
 
+        self.validator_warnings = list(
+            getattr(
+                self.validator,
+                "warnings",
+                [],
+            )
+        )
+
+        for warning in self.validator_warnings:
+
+            logger.warning("Dataset validation: %s", warning)
+
         validated = (
             self._extract_dataframe(
                 result=result,
@@ -434,6 +497,24 @@ class StudentPerformanceFramework:
             working_data.copy()
         )
 
+        # Record what the target actually is: definition,
+        # threshold method, thresholds, class distribution. This
+        # travels into the model bundle and the reports.
+        if hasattr(self.cpi_engine, "describe_target"):
+
+            self.target_description = (
+                self.cpi_engine.describe_target()
+            )
+
+        if is_leaky_definition(self.target_definition):
+
+            logger.warning(
+                "Target definition %r is computed from the same "
+                "columns used as predictors -- results measure "
+                "rule reconstruction, not prediction.",
+                self.target_definition,
+            )
+
         logger.info(
             "Preparing machine-learning data."
         )
@@ -471,45 +552,97 @@ class StudentPerformanceFramework:
                 "Call prepare_data() first."
             )
 
-        logger.info(
-            "Training Logistic Regression."
-        )
-
-        logistic_model = (
-            self._call_component_method(
-                component=self.trainer,
-                method_name=(
-                    "train_logistic_regression"
-                ),
-                data=self.prepared_data,
-            )
-        )
-
-        logger.info(
-            "Training Random Forest."
-        )
-
-        random_forest_model = (
-            self._call_component_method(
-                component=self.trainer,
-                method_name=(
-                    "train_random_forest"
-                ),
-                data=self.prepared_data,
-            )
-        )
-
-        self.trained_models = {
-            "Logistic Regression": (
-                logistic_model
+        # (method name on ModelTrainer, display name,
+        #  whether the model consumes scaled features)
+        plan = [
+            (
+                "train_logistic_regression",
+                "Logistic Regression",
+                True,
             ),
-            "Random Forest": (
-                random_forest_model
+            (
+                "train_random_forest",
+                "Random Forest",
+                False,
             ),
-        }
+            (
+                "train_ensemble",
+                "Soft-Voting Ensemble",
+                False,
+            ),
+        ]
+
+        trained: Dict[str, Any] = {}
+
+        self.model_requires_scaling = {}
+
+        self.cross_validation = {}
+
+        for method_name, display_name, needs_scaling in plan:
+
+            if not hasattr(self.trainer, method_name):
+
+                logger.info(
+                    "Trainer has no %s(); skipping %s.",
+                    method_name,
+                    display_name,
+                )
+
+                continue
+
+            logger.info("Training %s.", display_name)
+
+            trained[display_name] = (
+                self._call_component_method(
+                    component=self.trainer,
+                    method_name=method_name,
+                    data=self.prepared_data,
+                )
+            )
+
+            self.model_requires_scaling[display_name] = (
+                needs_scaling
+            )
+
+            # Cross-validate on the training fold only, so the
+            # held-out test metrics stay honest.
+            if hasattr(self.trainer, "cross_validate_model"):
+
+                try:
+
+                    self.cross_validation[
+                        display_name
+                    ] = self.trainer.cross_validate_model(
+                        self.prepared_data,
+                        model_name=display_name,
+                    )
+
+                except Exception as error:  # pragma: no cover
+
+                    logger.warning(
+                        "Cross-validation failed for %s: %s",
+                        display_name,
+                        error,
+                    )
+
+        self.trained_models = trained
+
+        # A sample of training rows gives SHAP a population to
+        # compare a student against; it is also saved into the
+        # bundle so explanations keep working after loading.
+        if isinstance(self.prepared_data, dict):
+
+            X_train = self.prepared_data.get("X_train_original")
+
+            if isinstance(X_train, pd.DataFrame):
+
+                self.explanation_background = (
+                    X_train.head(100).copy()
+                )
 
         logger.info(
-            "Model training completed."
+            "Model training completed: %s",
+            list(trained.keys()),
         )
 
         return self.trained_models
@@ -568,11 +701,39 @@ class StudentPerformanceFramework:
             evaluated_models
         )
 
-        self.best_model_requires_scaling = isinstance(
-            self._extract_estimator(
-                self.best_model
-            ),
-            LogisticRegression,
+        # Scaling requirements come from the evaluator (which
+        # knows whether each model was scored on scaled or
+        # original features) and fall back to type inspection.
+        for name, result in evaluated_models.items():
+
+            if isinstance(result, dict) and (
+                "requires_scaling" in result
+            ):
+
+                self.model_requires_scaling[name] = bool(
+                    result["requires_scaling"]
+                )
+
+            else:
+
+                self.model_requires_scaling[name] = (
+                    self._model_needs_scaling(
+                        self._extract_estimator(result)
+                    )
+                )
+
+        self.best_model_requires_scaling = (
+            self.model_requires_scaling.get(
+                self.best_model_name,
+                False,
+            )
+        )
+
+        # Recorded here (not only on save) so the caveats, the
+        # dashboard and the reports can quote the baseline and
+        # per-class figures before anything is persisted.
+        self.model_metrics = self._extract_metrics(
+            self.best_model
         )
 
         logger.info(
@@ -581,6 +742,25 @@ class StudentPerformanceFramework:
         )
 
         return self.comparison_results
+
+    @staticmethod
+    def _model_needs_scaling(estimator: Any) -> bool:
+        """
+        Whether an estimator expects externally-scaled features.
+
+        A Pipeline carries its own preprocessing, so it never
+        needs the bundle's scaler even if its final step is a
+        LogisticRegression.
+        """
+
+        from sklearn.pipeline import Pipeline
+
+        if isinstance(estimator, Pipeline):
+            return False
+
+        return isinstance(estimator, LogisticRegression)
+
+    # --------------------------------------------------------
 
     def get_available_models(self) -> list[str]:
         """
@@ -675,13 +855,14 @@ class StudentPerformanceFramework:
             )
         )
 
-        # Logistic Regression needs scaled input; tree-based
-        # models (Random Forest) were trained on the original,
-        # unscaled features. This works for any selected model,
-        # not just the auto-selected best one.
-        requires_scaling = isinstance(
-            model,
-            LogisticRegression,
+        # Scaling requirements are recorded per model at
+        # training/load time (self.model_requires_scaling),
+        # because the question is "what was this model fitted
+        # on?", not "what class is this?". Falls back to
+        # pipeline-aware type inspection when the map is empty.
+        requires_scaling = self.model_requires_scaling.get(
+            selected_display_name,
+            self._model_needs_scaling(model),
         )
 
         self._validate_student_data(
@@ -829,6 +1010,38 @@ class StudentPerformanceFramework:
                 error,
             )
 
+        # Instance-level explanation (SHAP): why THIS student
+        # got THIS label. Falls back to None when shap is not
+        # installed or the model type is unsupported -- the UI
+        # then shows the global-importance view above.
+        instance_explanation = None
+
+        try:
+
+            reverse_mapping = {
+                label: code
+                for code, label
+                in self.label_mapping.items()
+            }
+
+            instance_explanation = (
+                self.shap_explainer.explain(
+                    model=model,
+                    student_frame=student_frame,
+                    predicted_index=reverse_mapping.get(
+                        predicted_label
+                    ),
+                    background=self.explanation_background,
+                )
+            )
+
+        except Exception as error:
+
+            logger.warning(
+                "Could not compute instance-level explanation: %s",
+                error,
+            )
+
         # Academic risk / intervention assessment. Best-effort
         # for the same reason -- a malformed student_data field
         # shouldn't break the prediction itself.
@@ -876,6 +1089,7 @@ class StudentPerformanceFramework:
                 recommendations
             ),
             top_features=top_features,
+            instance_explanation=instance_explanation,
             intervention=intervention,
         )
 
@@ -924,7 +1138,85 @@ class StudentPerformanceFramework:
             )
         )
 
+        # Attach the methodology caveats so no reader can quote
+        # these numbers without the context that makes them
+        # meaningful (see docs/METHODOLOGY.md).
+        self.interpretation_report.caveats = (
+            self.methodology_caveats()
+        )
+
         return self.interpretation_report
+
+    # --------------------------------------------------------
+
+    def methodology_caveats(self) -> list[str]:
+        """
+        Statements that must travel with any reported metric.
+        """
+
+        caveats: list[str] = []
+
+        caveats.append(
+            "Target definition: "
+            + self.target_definition
+            + " -- "
+            + TARGET_DESCRIPTIONS.get(
+                self.target_definition,
+                "",
+            )
+        )
+
+        if is_leaky_definition(self.target_definition):
+
+            caveats.append(
+                "This target is computed from the same columns "
+                "used as predictors, so the reported scores "
+                "measure how well the model reproduces the "
+                "labelling rule, not how well it predicts an "
+                "unknown outcome. Do not present these figures "
+                "as predictive accuracy."
+            )
+
+        if getattr(self, "legacy_bundle", False):
+
+            caveats.append(
+                "This model bundle predates v3.0: it was trained "
+                "on the legacy CPI target with the exam score as "
+                "an input, so its scores measure rule "
+                "reconstruction. Retrain with "
+                "scripts/train_model.py for a predictive model."
+            )
+
+        if self.target_description:
+
+            caveats.append(
+                "Class thresholds (method="
+                f"{self.target_description.get('method')}): "
+                f"{self.target_description.get('low_threshold')} / "
+                f"{self.target_description.get('high_threshold')}; "
+                "labels are relative to this dataset's "
+                "distribution."
+            )
+
+        if self.model_metrics:
+
+            baseline = self.model_metrics.get(
+                "baseline_majority"
+            )
+
+            if baseline is not None:
+
+                caveats.append(
+                    "Majority-class baseline accuracy is "
+                    f"{baseline:.1%} -- compare the headline "
+                    "accuracy against that, not against zero."
+                )
+
+        for warning in self.validator_warnings:
+
+            caveats.append(f"Data note: {warning}")
+
+        return caveats
 
     # ========================================================
     # REPORT
@@ -1089,7 +1381,10 @@ class StudentPerformanceFramework:
         }
 
         requires_scaling = {
-            name: isinstance(estimator, LogisticRegression)
+            name: self.model_requires_scaling.get(
+                name,
+                self._model_needs_scaling(estimator),
+            )
             for name, estimator in models.items()
         }
 
@@ -1140,6 +1435,45 @@ class StudentPerformanceFramework:
 
             "metrics": metrics,
 
+            # ---- v7.0: self-describing bundle ----
+            # Environment pin, so a mismatched scikit-learn
+            # raises a clear message instead of an obscure
+            # AttributeError deep inside predict_proba.
+            "sklearn_version": sklearn.__version__,
+
+            "python_version": (
+                f"{sys.version_info.major}."
+                f"{sys.version_info.minor}"
+            ),
+
+            # What the model was actually predicting, with the
+            # thresholds and class distribution used to build
+            # the labels.
+            "target_definition": self.target_definition,
+
+            "target_info": self.target_description,
+
+            "label_policy": dict(LABEL_POLICY),
+
+            # Predictor ordering is part of the model contract.
+            "predictor_columns": list(self.required_features),
+
+            "cross_validation": self.cross_validation,
+
+            "validator_warnings": list(self.validator_warnings),
+
+            "caveats": self.methodology_caveats(),
+
+            # Background sample for instance-level explanations,
+            # so SHAP still works after loading in a new session.
+            "explanation_background": (
+                self.explanation_background.head(100)
+                if isinstance(
+                    self.explanation_background, pd.DataFrame
+                )
+                else None
+            ),
+
         }
 
         joblib.dump(bundle, path)
@@ -1160,6 +1494,45 @@ class StudentPerformanceFramework:
         )
 
         return str(path)
+
+    # --------------------------------------------------------
+
+    @staticmethod
+    def _safe_load_bundle(path: Path) -> Dict[str, Any]:
+        """
+        Load a joblib bundle and translate the two failures that
+        actually happen in practice into actionable messages:
+
+        * scikit-learn version mismatch (a pickle written by a
+          newer/older sklearn can fail with an AttributeError
+          such as `'LogisticRegression' object has no attribute
+          'multi_class'`), and
+        * a missing/incompatible dependency.
+        """
+
+        try:
+
+            return joblib.load(path)
+
+        except AttributeError as error:
+
+            raise RuntimeError(
+                "The saved model bundle could not be loaded because "
+                "it was created with a different scikit-learn "
+                f"version (this environment has "
+                f"{sklearn.__version__}). Original error: {error}. "
+                "Fix: install the pinned version from "
+                "requirements.txt, or retrain the model in this "
+                "environment."
+            ) from error
+
+        except ModuleNotFoundError as error:
+
+            raise RuntimeError(
+                "The saved model bundle needs a package that is "
+                f"not installed: {error}. Install the packages in "
+                "requirements.txt and try again."
+            ) from error
 
     # --------------------------------------------------------
 
@@ -1192,7 +1565,7 @@ class StudentPerformanceFramework:
                 "Training Mode)."
             )
 
-        bundle = joblib.load(path)
+        bundle = self._safe_load_bundle(path)
 
         # Backward compatible with bundles saved by an earlier
         # version of this method, which stored a single "model"
@@ -1245,6 +1618,52 @@ class StudentPerformanceFramework:
             "scaler": bundle["scaler"],
             "feature_names": bundle["feature_names"],
         }
+
+        # ---- v7.0: restore the model contract -----------------
+        # Predictor order comes from the bundle, not from the
+        # current config, so a model saved under a different
+        # target definition still predicts with the columns it
+        # was actually trained on.
+        self.required_features = list(
+            bundle.get(
+                "feature_names",
+                self.required_features,
+            )
+        )
+
+        self.model_requires_scaling = dict(
+            requires_scaling_map
+        )
+
+        # Bundles written before v3.0 carry no target_definition
+        # -- they can only ever have been trained on the CPI
+        # label, so say so rather than inheriting the (different)
+        # configured default.
+        legacy = "target_definition" not in bundle
+
+        self.target_definition = bundle.get(
+            "target_definition",
+            "cpi" if legacy else self.target_definition,
+        )
+
+        self.legacy_bundle = legacy
+
+        self.target_description = bundle.get("target_info")
+
+        self.cross_validation = bundle.get(
+            "cross_validation",
+            {},
+        )
+
+        self.validator_warnings = list(
+            bundle.get("validator_warnings", [])
+        )
+
+        background = bundle.get("explanation_background")
+
+        if isinstance(background, pd.DataFrame):
+
+            self.explanation_background = background.copy()
 
         logger.info(
             "Loaded %d model(s) from %s. Best: %s",
@@ -1835,10 +2254,11 @@ class StudentPerformanceFramework:
                     "transform",
                 ):
 
-                    return (
+                    return self._keep_frame(
                         transformer.transform(
                             student_frame
-                        )
+                        ),
+                        student_frame,
                     )
 
         if isinstance(
@@ -1866,13 +2286,34 @@ class StudentPerformanceFramework:
                     )
                 ):
 
-                    return (
+                    return self._keep_frame(
                         transformer.transform(
                             student_frame
-                        )
+                        ),
+                        student_frame,
                     )
 
         return student_frame
+
+    @staticmethod
+    def _keep_frame(transformed: Any, template: pd.DataFrame) -> Any:
+        """
+        Re-attach column names after a scaler transform.
+
+        sklearn drops the DataFrame wrapper, which makes
+        estimators fitted on named features warn about missing
+        feature names on every prediction.
+        """
+
+        if isinstance(transformed, pd.DataFrame):
+            return transformed
+
+        return pd.DataFrame(
+            np.asarray(transformed),
+            columns=list(template.columns),
+        )
+
+    # --------------------------------------------------------
 
     def _predict_probabilities(
         self,

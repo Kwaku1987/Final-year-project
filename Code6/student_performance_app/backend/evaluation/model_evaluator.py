@@ -76,8 +76,11 @@ from sklearn.linear_model import (
     LogisticRegression,
 )
 
+from sklearn.pipeline import Pipeline
+
 from sklearn.metrics import (
     accuracy_score,
+    balanced_accuracy_score,
     precision_score,
     recall_score,
     f1_score,
@@ -97,6 +100,8 @@ from sklearn.inspection import (
 from backend.training.model_trainer import (
     TrainingResult,
 )
+
+from backend.config import PERFORMANCE_LABELS
 
 logger = logging.getLogger(__name__)
 
@@ -181,16 +186,20 @@ class ModelEvaluator:
         )
 
         # Logistic Regression was trained on scaled features;
-        # everything else (Random Forest, etc.) on the original,
-        # unscaled features -- matches how ModelTrainer's
-        # framework-compatible adapters trained them.
-        if isinstance(model, LogisticRegression):
+        # everything else (Random Forest, the soft-voting
+        # ensemble, etc.) on the original, unscaled features --
+        # matches how ModelTrainer's adapters trained them. A
+        # Pipeline carries its own scaler and therefore always
+        # consumes the original features.
+        requires_scaling = (
+            isinstance(model, LogisticRegression)
+            and not isinstance(model, Pipeline)
+        )
 
-            X_test = prepared_data["X_test_scaled"]
-
-        else:
-
-            X_test = prepared_data["X_test_original"]
+        X_test = prepared_data[
+            "X_test_scaled" if requires_scaling
+            else "X_test_original"
+        ]
 
         y_test = prepared_data["y_test"]
 
@@ -220,9 +229,58 @@ class ModelEvaluator:
             output_dict=True, zero_division=0,
         )
 
+        # ----------------------------------------------------
+        # Honest metrics (v3.0)
+        # ----------------------------------------------------
+        # Weighted accuracy alone is misleading on an
+        # imbalanced target: a model that only ever predicts the
+        # majority class can look respectable. macro F1,
+        # balanced accuracy and the per-class breakdown, plus a
+        # majority-class baseline, make the real picture visible.
+        # ----------------------------------------------------
+        accuracy = float(accuracy)
+
+        macro_f1 = float(
+            f1_score(
+                y_test, predictions,
+                average="macro", zero_division=0,
+            )
+        )
+
+        balanced = float(
+            balanced_accuracy_score(y_test, predictions)
+        )
+
+        per_class = {}
+
+        for label in sorted(pd.unique(y_test)):
+
+            key = str(label)
+
+            if key in report:
+
+                per_class[
+                    self._label_name(label)
+                ] = {
+                    "precision": float(report[key]["precision"]),
+                    "recall": float(report[key]["recall"]),
+                    "f1": float(report[key]["f1-score"]),
+                    "support": int(report[key]["support"]),
+                }
+
+        counts = pd.Series(y_test).value_counts(normalize=True)
+
+        baseline_majority = (
+            float(counts.iloc[0]) if len(counts) else 0.0
+        )
+
+        roc_auc = self._safe_roc_auc(model, X_test, y_test)
+
         return {
 
             "model": model,
+
+            "requires_scaling": requires_scaling,
 
             "metrics": {
                 "accuracy": accuracy,
@@ -230,12 +288,76 @@ class ModelEvaluator:
                 "recall": recall,
                 "f1": f1,
                 "f1_score": f1,
+                "macro_f1": macro_f1,
+                "balanced_accuracy": balanced,
+                "roc_auc": roc_auc,
+                "baseline_majority": baseline_majority,
+                "lift_over_baseline": accuracy - baseline_majority,
+                "n_test": int(len(y_test)),
+                "per_class": per_class,
             },
 
             "confusion_matrix": cm,
 
             "classification_report": report,
         }
+
+    # -------------------------------------------------------
+
+    @staticmethod
+    def _safe_roc_auc(model, X_test, y_test) -> Optional[float]:
+        """
+        Multiclass one-vs-rest ROC-AUC, or None when the model
+        exposes no probabilities or the metric is undefined for
+        this class distribution.
+        """
+
+        if not hasattr(model, "predict_proba"):
+            return None
+
+        try:
+
+            probabilities = model.predict_proba(X_test)
+
+            classes = np.unique(y_test)
+
+            if len(classes) < 2:
+                return None
+
+            y_binary = label_binarize(y_test, classes=classes)
+
+            if y_binary.shape[1] == 1:
+                y_binary = np.hstack([1 - y_binary, y_binary])
+
+            return float(
+                roc_auc_score(
+                    y_binary,
+                    probabilities,
+                    multi_class="ovr",
+                    average="weighted",
+                )
+            )
+
+        except Exception as error:  # pragma: no cover - defensive
+            logger.warning("ROC-AUC unavailable: %s", error)
+            return None
+
+    # -------------------------------------------------------
+
+    @staticmethod
+    def _label_name(label) -> str:
+        """
+        Map an encoded class (0/1/2 or an already-string label)
+        to its display name.
+        """
+
+        if isinstance(label, str):
+            return label
+
+        try:
+            return PERFORMANCE_LABELS.get(int(label), str(label))
+        except (TypeError, ValueError):
+            return str(label)
 
     # =======================================================
     # FULL PIPELINE : EVALUATE ALL MODELS

@@ -55,6 +55,21 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# LOGGING SHIM
+# ============================================================
+# This module was written notebook-style, with _report() calls.
+# Inside a Streamlit server those go to the terminal and are
+# invisible to the user, so they are routed through logging
+# instead -- one log record per former _report().
+# ============================================================
+
+def _report(*args) -> None:
+    """Log what used to be printed (keeps notebook-era output)."""
+    logger.info(" ".join(str(a) for a in args))
+
+
+
+# ============================================================
 # STAGE 6 : EXPLORATORY DATA ANALYSIS (EDA)
 # ============================================================
 
@@ -97,24 +112,24 @@ class EDAAnalyzer:
         Display a high-level overview of the dataset.
         """
         logger.info("Generating dataset overview...")
-        print("\n" + "="*60)
-        print("DATASET OVERVIEW")
-        print("="*60)
-        print(f"\nRows    : {self.df.shape[0]}")
-        print(f"Columns : {self.df.shape[1]}")
-        print("\nColumn Names")
-        print("-"*60)
+        _report("\n" + "="*60)
+        _report("DATASET OVERVIEW")
+        _report("="*60)
+        _report(f"\nRows    : {self.df.shape[0]}")
+        _report(f"Columns : {self.df.shape[1]}")
+        _report("\nColumn Names")
+        _report("-"*60)
         for column in self.df.columns:
-            print(f"• {column}")
-        print("\nData Types")
-        print("-"*60)
-        print(self.df.dtypes)
-        print("\nFirst Five Records")
-        print("-"*60)
-        print(self.df.head())
-        print("\nLast Five Records")
-        print("-"*60)
-        print(self.df.tail())
+            _report(f"• {column}")
+        _report("\nData Types")
+        _report("-"*60)
+        _report(self.df.dtypes)
+        _report("\nFirst Five Records")
+        _report("-"*60)
+        _report(self.df.head())
+        _report("\nLast Five Records")
+        _report("-"*60)
+        _report(self.df.tail())
         logger.info("Dataset overview completed.")
 
     # -------------------------------------------------------
@@ -133,11 +148,11 @@ class EDAAnalyzer:
         - Maximum
         """
         logger.info("Generating summary statistics...")
-        print("\n" + "=" * 60)
-        print("SUMMARY STATISTICS")
-        print("=" * 60)
+        _report("\n" + "=" * 60)
+        _report("SUMMARY STATISTICS")
+        _report("=" * 60)
         summary = self.df.describe()
-        print(summary)
+        _report(summary)
         logger.info("Summary statistics generated successfully.")
 
     # -------------------------------------------------------
@@ -161,17 +176,17 @@ class EDAAnalyzer:
             "Missing Values": missing_count,
             "Percentage (%)": missing_percent
         })
-        print("\n" + "=" * 60)
-        print("MISSING VALUE ANALYSIS")
-        print("=" * 60)
-        print(summary)
+        _report("\n" + "=" * 60)
+        _report("MISSING VALUE ANALYSIS")
+        _report("=" * 60)
+        _report(summary)
         total_missing = missing_count.sum()
-        print("\n" + "-" * 60)
+        _report("\n" + "-" * 60)
         if total_missing == 0:
-            print("✓ No missing values detected.")
+            _report("✓ No missing values detected.")
             logger.info("No missing values found.")
         else:
-            print(f"⚠ Total Missing Values: {total_missing}")
+            _report(f"⚠ Total Missing Values: {total_missing}")
             logger.warning(
                 f"{total_missing} missing values detected."
             )
@@ -191,17 +206,17 @@ class EDAAnalyzer:
         logger.info("Checking for duplicate records...")
         duplicates = self.df[self.df.duplicated()]
         duplicate_count = len(duplicates)
-        print("\n" + "=" * 60)
-        print("DUPLICATE RECORD ANALYSIS")
-        print("=" * 60)
-        print(f"\nTotal Duplicate Records: {duplicate_count}")
+        _report("\n" + "=" * 60)
+        _report("DUPLICATE RECORD ANALYSIS")
+        _report("=" * 60)
+        _report(f"\nTotal Duplicate Records: {duplicate_count}")
         if duplicate_count == 0:
-            print("\n✓ No duplicate records detected.")
+            _report("\n✓ No duplicate records detected.")
             logger.info("No duplicate records found.")
         else:
-            print("\nDuplicate Records Preview")
-            print("-" * 60)
-            print(duplicates.head())
+            _report("\nDuplicate Records Preview")
+            _report("-" * 60)
+            _report(duplicates.head())
             logger.warning(
                 f"{duplicate_count} duplicate records detected."
             )
@@ -230,10 +245,10 @@ class EDAAnalyzer:
             "Count": counts,
             "Percentage (%)": percentages
         })
-        print("\n" + "=" * 60)
-        print("TARGET VARIABLE DISTRIBUTION")
-        print("=" * 60)
-        print(summary)
+        _report("\n" + "=" * 60)
+        _report("TARGET VARIABLE DISTRIBUTION")
+        _report("=" * 60)
+        _report(summary)
         plt.figure(figsize=(8, 5))
         plt.bar(
             summary.index,
@@ -249,10 +264,10 @@ class EDAAnalyzer:
             - summary["Percentage (%)"].min()
         )
         if imbalance <= 20:
-            print("\n✓ Dataset is reasonably balanced.")
+            _report("\n✓ Dataset is reasonably balanced.")
             logger.info("Target variable is balanced.")
         else:
-            print("\n⚠ Dataset appears imbalanced.")
+            _report("\n⚠ Dataset appears imbalanced.")
             logger.warning(
                 "Target variable may require class balancing."
             )
@@ -332,11 +347,11 @@ class EDAAnalyzer:
 
         corr_matrix = self.df[numeric_features].corr(method="pearson")
 
-        print("\n" + "=" * 60)
-        print("CORRELATION MATRIX")
-        print("=" * 60)
+        _report("\n" + "=" * 60)
+        _report("CORRELATION MATRIX")
+        _report("=" * 60)
 
-        print(corr_matrix.round(2))
+        _report(corr_matrix.round(2))
 
         plt.figure(figsize=(10, 8))
 
@@ -380,9 +395,9 @@ class EDAAnalyzer:
 
         logger.info("Generating correlation insights...")
 
-        print("\n" + "=" * 60)
-        print("CORRELATION INSIGHTS")
-        print("=" * 60)
+        _report("\n" + "=" * 60)
+        _report("CORRELATION INSIGHTS")
+        _report("=" * 60)
 
         cpi_corr = corr_matrix["CPI"].drop("CPI")
 
@@ -398,7 +413,7 @@ class EDAAnalyzer:
                     else "Negative"
                 )
 
-                print(
+                _report(
                     f"{feature:<25}"
                     f"{value:>6.2f}"
                     f"   ({direction})"
@@ -418,9 +433,9 @@ class EDAAnalyzer:
 
         logger.info("Checking multicollinearity...")
 
-        print("\n" + "=" * 60)
-        print("MULTICOLLINEARITY CHECK")
-        print("=" * 60)
+        _report("\n" + "=" * 60)
+        _report("MULTICOLLINEARITY CHECK")
+        _report("=" * 60)
 
         for i in range(len(FEATURE_COLUMNS)):
 
@@ -436,7 +451,7 @@ class EDAAnalyzer:
 
                 if abs(corr) >= MULTICOLLINEARITY_THRESHOLD:
 
-                    print(
+                    _report(
                         f"WARNING: "
                         f"{feature1}"
                         f" \u2194 "
@@ -465,9 +480,9 @@ class EDAAnalyzer:
 
         summary = []
 
-        print("\n" + "=" * 60)
-        print("OUTLIER ANALYSIS")
-        print("=" * 60)
+        _report("\n" + "=" * 60)
+        _report("OUTLIER ANALYSIS")
+        _report("=" * 60)
 
         for feature in numeric_features:
 
@@ -506,7 +521,7 @@ class EDAAnalyzer:
 
         summary = pd.DataFrame(summary)
 
-        print(summary)
+        _report(summary)
 
         logger.info("Outlier analysis completed.")
 
@@ -550,8 +565,8 @@ class EDAAnalyzer:
 
             correlation = self.df[feature].corr(self.df["CPI"])
 
-            print("\n" + "-" * 60)
-            print(
+            _report("\n" + "-" * 60)
+            _report(
                 f"{feature.replace('_',' ').title()} "
                 f"(r = {correlation:.2f})"
             )
@@ -618,38 +633,38 @@ class EDAAnalyzer:
 
         logger.info("Generating EDA recommendations...")
 
-        print("\n" + "=" * 70)
-        print("EDA SUMMARY AND RECOMMENDATIONS")
-        print("=" * 70)
+        _report("\n" + "=" * 70)
+        _report("EDA SUMMARY AND RECOMMENDATIONS")
+        _report("=" * 70)
 
-        print("\nDATASET HEALTH")
+        _report("\nDATASET HEALTH")
 
-        print("\u2713 Required features are present.")
-        print("\u2713 Data types are valid.")
-        print("\u2713 Dataset structure is consistent.")
+        _report("\u2713 Required features are present.")
+        _report("\u2713 Data types are valid.")
+        _report("\u2713 Dataset structure is consistent.")
 
-        print("\nDATA QUALITY")
+        _report("\nDATA QUALITY")
 
-        print("\u2713 Missing values have been addressed.")
-        print("\u2713 Duplicate records have been checked.")
-        print("\u2713 Dataset passed compatibility validation.")
+        _report("\u2713 Missing values have been addressed.")
+        _report("\u2713 Duplicate records have been checked.")
+        _report("\u2713 Dataset passed compatibility validation.")
 
-        print("\nFEATURE ANALYSIS")
+        _report("\nFEATURE ANALYSIS")
 
-        print("\u2713 Feature distributions have been examined.")
-        print("\u2713 Correlation analysis completed.")
-        print("\u2713 Outliers identified and documented.")
-        print("\u2713 Feature relationships analysed.")
+        _report("\u2713 Feature distributions have been examined.")
+        _report("\u2713 Correlation analysis completed.")
+        _report("\u2713 Outliers identified and documented.")
+        _report("\u2713 Feature relationships analysed.")
 
-        print("\nMODEL READINESS")
+        _report("\nMODEL READINESS")
 
-        print("\u2713 CPI successfully generated.")
-        print("\u2713 Target variable is ready.")
-        print("\u2713 Dataset is suitable for Feature Engineering.")
+        _report("\u2713 CPI successfully generated.")
+        _report("\u2713 Target variable is ready.")
+        _report("\u2713 Dataset is suitable for Feature Engineering.")
 
-        print("\nFINAL RECOMMENDATION")
+        _report("\nFINAL RECOMMENDATION")
 
-        print(
+        _report(
             "The dataset is considered READY for "
             "Feature Engineering and Machine Learning."
         )
