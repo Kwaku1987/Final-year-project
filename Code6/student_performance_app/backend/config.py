@@ -85,7 +85,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 # PROJECT CONFIGURATION
 # ============================================================
 
-PROJECT_VERSION = "3.0"
+PROJECT_VERSION = "3.1"
 
 TEST_SIZE = 0.20
 
@@ -335,6 +335,51 @@ COLUMN_MAPPING = {
     "midterm_score": "test_score",
     # Exam
     "final_exam_score": "exam_score",
+}
+
+# ============================================================
+# HYPERPARAMETER SEARCH AND PROBABILITY CALIBRATION
+# ============================================================
+# Two problems this addresses (see docs/METHODOLOGY.md §5):
+#
+#  1. The models compared in v3.0 were two fixed configurations,
+#     so "best model" meant "best of two untuned defaults".
+#  2. Logistic Regression and Random Forest disagreed sharply on
+#     borderline students (e.g. High at 100% vs Average at 63%)
+#     because their probabilities were not on the same,
+#     trustworthy scale. A confidence figure a lecturer cannot
+#     interpret is worse than no figure.
+#
+# Both stages run on the TRAINING fold only; the hold-out test
+# fold stays untouched so the reported metrics remain honest.
+# Set SPAS_TUNING=0 / SPAS_CALIBRATION=0 to skip either stage.
+# ------------------------------------------------------------
+
+TUNING = {
+    "enabled": os.environ.get("SPAS_TUNING", "1") == "1",
+    "cv": 3,
+    "n_iter": 8,
+    "scoring": "f1_macro",
+    "random_state": RANDOM_STATE,
+}
+
+TUNING_GRIDS = {
+    "Random Forest": {
+        "n_estimators": [200],
+        "max_depth": [None, 8, 16],
+        "min_samples_leaf": [1, 2, 4],
+        "max_features": ["sqrt", "log2"],
+    },
+    "Logistic Regression": {
+        "classifier__C": [0.1, 1.0, 10.0],
+        "classifier__class_weight": [None, "balanced"],
+    },
+}
+
+CALIBRATION = {
+    "enabled": os.environ.get("SPAS_CALIBRATION", "1") == "1",
+    "method": "sigmoid",
+    "cv": 3,
 }
 
 # ============================================================

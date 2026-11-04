@@ -50,8 +50,10 @@ from backend.interpretation.shap_explainer import (
 )
 
 from backend.config import (
+    CALIBRATION,
     FEATURE_COLUMNS as _CONFIG_FEATURE_COLUMNS,
     LABEL_POLICY,
+    TUNING,
     PREDICTOR_COLUMNS,
     TARGET_DEFINITION,
     TARGET_DESCRIPTIONS,
@@ -211,7 +213,7 @@ class StudentPerformanceFramework:
 
     # Bumped when the saved model bundle's structure changes in
     # a way that matters for consumers reading model_version.
-    MODEL_BUNDLE_VERSION = "7.0"
+    MODEL_BUNDLE_VERSION = "7.1"
 
     def __init__(
         self,
@@ -308,6 +310,16 @@ class StudentPerformanceFramework:
 
         # Cross-validation results per model.
         self.cross_validation: Dict[str, Dict[str, float]] = {}
+
+        # Hyperparameter search results per model.
+        self.tuning_results: Dict[str, Dict[str, Any]] = {}
+
+        # Whether the selected model had its probabilities
+        # calibrated (affects how confidence should be read).
+        self.best_model_is_calibrated: bool = False
+
+        # Names of models whose probabilities are calibrated.
+        self.calibrated_models: set = set()
 
         # True when the loaded bundle predates v3.0.
         self.legacy_bundle = False
@@ -554,23 +566,60 @@ class StudentPerformanceFramework:
 
         # (method name on ModelTrainer, display name,
         #  whether the model consumes scaled features)
+        # (trainer method, display name, needs external scaling,
+        #  is calibrated)
         plan = [
             (
                 "train_logistic_regression",
                 "Logistic Regression",
                 True,
+                False,
             ),
             (
                 "train_random_forest",
                 "Random Forest",
+                False,
                 False,
             ),
             (
                 "train_ensemble",
                 "Soft-Voting Ensemble",
                 False,
+                False,
             ),
         ]
+
+        # Every candidate below is fitted on the TRAINING fold
+        # only, so the hold-out metrics stay honest.
+        if TUNING.get("enabled", True):
+
+            plan.append(
+                (
+                    "train_tuned_random_forest",
+                    "Random Forest (Tuned)",
+                    False,
+                    False,
+                )
+            )
+
+        if CALIBRATION.get("enabled", True):
+
+            plan.extend(
+                [
+                    (
+                        "train_calibrated_random_forest",
+                        "Random Forest (Calibrated)",
+                        False,
+                        True,
+                    ),
+                    (
+                        "train_calibrated_logistic_regression",
+                        "Logistic Regression (Calibrated)",
+                        False,
+                        True,
+                    ),
+                ]
+            )
 
         trained: Dict[str, Any] = {}
 
@@ -578,7 +627,14 @@ class StudentPerformanceFramework:
 
         self.cross_validation = {}
 
-        for method_name, display_name, needs_scaling in plan:
+        self.tuning_results = {}
+
+        for (
+            method_name,
+            display_name,
+            needs_scaling,
+            is_calibrated,
+        ) in plan:
 
             if not hasattr(self.trainer, method_name):
 
@@ -603,6 +659,32 @@ class StudentPerformanceFramework:
             self.model_requires_scaling[display_name] = (
                 needs_scaling
             )
+
+            if is_calibrated:
+
+                self.calibrated_models.add(display_name)
+
+            # Record what the search actually chose, so it can be
+            # written into the bundle and the report.
+            if "Tuned" in display_name and hasattr(
+                self.trainer, "tune_model"
+            ):
+
+                try:
+
+                    _, summary = self.trainer.tune_model(
+                        self.prepared_data,
+                        "Random Forest",
+                    )
+
+                    self.tuning_results[display_name] = summary
+
+                except Exception as error:  # pragma: no cover
+
+                    logger.warning(
+                        "Could not record tuning summary: %s",
+                        error,
+                    )
 
             # Cross-validate on the training fold only, so the
             # held-out test metrics stay honest.
@@ -729,6 +811,10 @@ class StudentPerformanceFramework:
             )
         )
 
+        self.best_model_is_calibrated = (
+            self.best_model_name in self.calibrated_models
+        )
+
         # Recorded here (not only on save) so the caveats, the
         # dashboard and the reports can quote the baseline and
         # per-class figures before anything is persisted.
@@ -755,7 +841,11 @@ class StudentPerformanceFramework:
 
         from sklearn.pipeline import Pipeline
 
-        if isinstance(estimator, Pipeline):
+        from sklearn.calibration import CalibratedClassifierCV
+
+        # Calibrated wrappers and pipelines carry their own
+        # preprocessing; the final step is never fed raw features.
+        if isinstance(estimator, (Pipeline, CalibratedClassifierCV)):
             return False
 
         return isinstance(estimator, LogisticRegression)
@@ -1149,6 +1239,21 @@ class StudentPerformanceFramework:
 
     # --------------------------------------------------------
 
+    def _metric_text(self, key: str) -> str:
+        """Format one metric for a caveat sentence."""
+
+        if not self.model_metrics:
+            return "n/a"
+
+        value = self.model_metrics.get(key)
+
+        if value is None:
+            return "n/a"
+
+        return f"{float(value):.4f}"
+
+    # --------------------------------------------------------
+
     def methodology_caveats(self) -> list[str]:
         """
         Statements that must travel with any reported metric.
@@ -1196,6 +1301,29 @@ class StudentPerformanceFramework:
                 f"{self.target_description.get('high_threshold')}; "
                 "labels are relative to this dataset's "
                 "distribution."
+            )
+
+        if self.best_model_is_calibrated:
+
+            caveats.append(
+                "The selected model's probabilities are calibrated "
+                "(Platt scaling), so the confidence figure can be "
+                "read as a frequency: students given 80% are "
+                "actually in that band about 80% of the time. "
+                f"Brier score: {self._metric_text('brier_score')}, "
+                f"ECE: {self._metric_text('calibration_error')}."
+            )
+
+        if self.tuning_results:
+
+            best = next(iter(self.tuning_results.values()))
+
+            caveats.append(
+                "Hyperparameters were searched on the training fold"
+                f" ({best.get('candidates_evaluated')} candidates, "
+                f"scoring={best.get('scoring')}, "
+                f"best CV={best.get('best_cv_score'):.4f}); the "
+                "hold-out test fold was not used for selection."
             )
 
         if self.model_metrics:
@@ -1460,6 +1588,12 @@ class StudentPerformanceFramework:
 
             "cross_validation": self.cross_validation,
 
+            "tuning_results": self.tuning_results,
+
+            "calibrated_models": sorted(self.calibrated_models),
+
+            "calibration_config": dict(CALIBRATION),
+
             "validator_warnings": list(self.validator_warnings),
 
             "caveats": self.methodology_caveats(),
@@ -1657,6 +1791,16 @@ class StudentPerformanceFramework:
 
         self.validator_warnings = list(
             bundle.get("validator_warnings", [])
+        )
+
+        self.tuning_results = bundle.get("tuning_results", {})
+
+        self.calibrated_models = set(
+            bundle.get("calibrated_models", [])
+        )
+
+        self.best_model_is_calibrated = (
+            self.best_model_name in self.calibrated_models
         )
 
         background = bundle.get("explanation_background")

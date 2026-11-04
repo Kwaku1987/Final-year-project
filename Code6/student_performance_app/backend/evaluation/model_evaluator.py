@@ -276,6 +276,12 @@ class ModelEvaluator:
 
         roc_auc = self._safe_roc_auc(model, X_test, y_test)
 
+        brier = self._safe_brier(model, X_test, y_test)
+
+        calibration_error = self._expected_calibration_error(
+            model, X_test, y_test,
+        )
+
         return {
 
             "model": model,
@@ -291,6 +297,8 @@ class ModelEvaluator:
                 "macro_f1": macro_f1,
                 "balanced_accuracy": balanced,
                 "roc_auc": roc_auc,
+                "brier_score": brier,
+                "calibration_error": calibration_error,
                 "baseline_majority": baseline_majority,
                 "lift_over_baseline": accuracy - baseline_majority,
                 "n_test": int(len(y_test)),
@@ -340,6 +348,113 @@ class ModelEvaluator:
 
         except Exception as error:  # pragma: no cover - defensive
             logger.warning("ROC-AUC unavailable: %s", error)
+            return None
+
+    # -------------------------------------------------------
+
+    @staticmethod
+    def _safe_brier(model, X_test, y_test) -> Optional[float]:
+        """
+        Multiclass Brier score (mean squared error between the
+        predicted probability vector and the one-hot truth).
+
+        Lower is better. It is the single most useful number for
+        "can I trust the confidence figure?" -- a model can have
+        good accuracy and a terrible Brier score.
+        """
+
+        if not hasattr(model, "predict_proba"):
+            return None
+
+        try:
+
+            probabilities = np.asarray(model.predict_proba(X_test))
+
+            classes = np.unique(y_test)
+
+            one_hot = np.zeros_like(probabilities)
+
+            index = {
+                label: position
+                for position, label in enumerate(classes)
+            }
+
+            for row, label in enumerate(y_test):
+
+                if label in index:
+                    one_hot[row, index[label]] = 1.0
+
+            return float(
+                np.mean(np.sum((probabilities - one_hot) ** 2, axis=1))
+            )
+
+        except Exception as error:  # pragma: no cover - defensive
+            logger.warning("Brier score unavailable: %s", error)
+            return None
+
+    # -------------------------------------------------------
+
+    @staticmethod
+    def _expected_calibration_error(
+        model,
+        X_test,
+        y_test,
+        bins: int = 10,
+    ) -> Optional[float]:
+        """
+        Expected Calibration Error (ECE).
+
+        Bins predictions by confidence, then averages
+        |accuracy - confidence| across the bins. A perfectly
+        calibrated model that says 80% is right 80% of the time
+        scores 0.
+        """
+
+        if not hasattr(model, "predict_proba"):
+            return None
+
+        try:
+
+            probabilities = np.asarray(model.predict_proba(X_test))
+
+            confidences = probabilities.max(axis=1)
+
+            predictions = model.predict(X_test)
+
+            predictions = np.asarray(predictions)
+
+            correct = (predictions == np.asarray(y_test)).astype(float)
+
+            edges = np.linspace(0.0, 1.0, bins + 1)
+
+            total = len(confidences)
+
+            if total == 0:
+                return None
+
+            error = 0.0
+
+            for lower, upper in zip(edges[:-1], edges[1:]):
+
+                mask = (confidences > lower) & (
+                    confidences <= upper
+                )
+
+                if not mask.any():
+                    continue
+
+                share = mask.sum() / total
+
+                gap = abs(
+                    correct[mask].mean() - confidences[mask].mean()
+                )
+
+                error += share * gap
+
+            return float(error)
+
+        except Exception as error:  # pragma: no cover - defensive
+            logger.warning("Calibration error unavailable: %s", error)
             return None
 
     # -------------------------------------------------------

@@ -106,6 +106,17 @@ class ShapExplainer:
         if hasattr(model, "steps") and model.steps:
             return model.steps[-1][1]
 
+        # CalibratedClassifierCV: the real model lives one
+        # level deeper.
+        calibrated = getattr(model, "calibrated_classifiers_", None)
+
+        if calibrated:
+
+            member = getattr(calibrated[0], "estimator", None)
+
+            if member is not None:
+                return ShapExplainer._final_estimator(member)
+
         # VotingClassifier: explain the first branch, which is
         # the most interpretable (linear) member.
         if hasattr(model, "estimators_") and getattr(
@@ -268,7 +279,10 @@ class ShapExplainer:
             if explainer is None:
                 return None
 
-            values = explainer.shap_values(transformed)
+            values = self._values_from(
+                explainer,
+                transformed,
+            )
 
             values = self._select_class(
                 values,
@@ -329,6 +343,40 @@ class ShapExplainer:
                 error,
             )
             return None
+
+    # -------------------------------------------------------
+
+    @staticmethod
+    def _values_from(explainer: Any, transformed: pd.DataFrame):
+        """
+        Read contributions from either SHAP API.
+
+        Older explainers expose shap_values(); the newer
+        ExactExplainer/Explainer objects are called and return an
+        Explanation whose .values holds the matrix. Both shapes are
+        normalised here so the caller only deals with one.
+        """
+
+        if hasattr(explainer, "shap_values"):
+
+            return explainer.shap_values(transformed)
+
+        explanation = explainer(transformed)
+
+        values = getattr(explanation, "values", None)
+
+        if values is None:  # pragma: no cover - defensive
+            return None
+
+        array = np.asarray(values)
+
+        # Newer API returns (samples, features, classes); drop the
+        # sample axis and keep (features, classes) so
+        # _select_class() can pick the predicted class.
+        if array.ndim == 3:
+            return array[0]
+
+        return array
 
     # -------------------------------------------------------
 

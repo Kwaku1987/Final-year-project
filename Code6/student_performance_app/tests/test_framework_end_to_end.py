@@ -44,15 +44,73 @@ def test_predictors_never_include_the_label_source(trained):
 # TRAINING + CV
 # ============================================================
 
-def test_three_models_are_trained(trained):
+def test_expected_models_are_trained(trained):
 
     framework, _ = trained
 
-    assert set(framework.trained_models) == {
+    expected = {
         "Logistic Regression",
         "Random Forest",
         "Soft-Voting Ensemble",
+        "Random Forest (Tuned)",
+        "Random Forest (Calibrated)",
+        "Logistic Regression (Calibrated)",
     }
+
+    # Config flags may disable search/calibration; whatever is
+    # trained must be a subset of the intended candidates.
+    assert set(framework.trained_models) <= expected
+
+    assert {
+        "Logistic Regression",
+        "Random Forest",
+        "Soft-Voting Ensemble",
+    } <= set(framework.trained_models)
+
+
+def test_tuning_is_recorded_and_calibration_flagged(trained):
+
+    framework, _ = trained
+
+    if "Random Forest (Tuned)" in framework.trained_models:
+
+        summary = framework.tuning_results["Random Forest (Tuned)"]
+
+        assert summary["candidates_evaluated"] >= 1
+
+        assert 0.0 <= summary["best_cv_score"] <= 1.0
+
+    if "Random Forest (Calibrated)" in framework.trained_models:
+
+        assert (
+            "Random Forest (Calibrated)"
+            in framework.calibrated_models
+        )
+
+        # Calibrated wrappers carry their own preprocessing.
+        assert (
+            framework.model_requires_scaling[
+                "Random Forest (Calibrated)"
+            ]
+            is False
+        )
+
+
+def test_calibration_quality_is_measured(trained):
+
+    framework, _ = trained
+
+    for result in framework.comparison_results.values():
+
+        metrics = result["metrics"]
+
+        if metrics.get("brier_score") is not None:
+
+            assert 0.0 <= metrics["brier_score"] <= 2.0
+
+        if metrics.get("calibration_error") is not None:
+
+            assert 0.0 <= metrics["calibration_error"] <= 1.0
 
 
 def test_cross_validation_is_recorded(trained):

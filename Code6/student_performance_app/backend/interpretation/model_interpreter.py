@@ -387,6 +387,40 @@ class ModelInterpreter:
             return table
 
         # ----------------------------------------------------
+        # Calibrated wrappers (v3.0)
+        # ----------------------------------------------------
+        # CalibratedClassifierCV keeps the real models one level
+        # deeper (calibrated_classifiers_[i].estimator); explain
+        # the first one, which is the same model on a subset of
+        # the folds.
+        # ----------------------------------------------------
+        calibrated = getattr(model, "calibrated_classifiers_", None)
+
+        if calibrated:
+
+            member = getattr(calibrated[0], "estimator", None)
+
+            if member is not None:
+
+                logger.info(
+                    "Interpreting calibrated wrapper %s via its "
+                    "base estimator.",
+                    type(model).__name__,
+                )
+
+                table = self.extract_feature_importance(
+                    member,
+                    names,
+                )
+
+                table["importance_method"] = (
+                    f"{table['importance_method'].iloc[0]}"
+                    " (calibrated wrapper)"
+                )
+
+                return table
+
+        # ----------------------------------------------------
         # Meta-estimators (v3.0)
         # ----------------------------------------------------
         # A VotingClassifier exposes neither coef_ nor

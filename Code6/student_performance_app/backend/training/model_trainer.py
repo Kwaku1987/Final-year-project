@@ -98,14 +98,22 @@ from sklearn.ensemble import (
 
 from sklearn.model_selection import (
     StratifiedKFold,
+    RandomizedSearchCV,
     cross_val_score as _sk_cross_val_score,
 )
+
+from sklearn.calibration import CalibratedClassifierCV
 
 from backend.preprocessing.target_encoder import (
     TargetEncoder,
 )
 
-from backend.config import CV_FOLDS
+from backend.config import (
+    CALIBRATION,
+    CV_FOLDS,
+    TUNING,
+    TUNING_GRIDS,
+)
 
 # ------------------------------------------------------------
 # Optional XGBoost
@@ -452,6 +460,243 @@ class ModelTrainer:
         return (
             prepared_data["X_train_original"],
             prepared_data["y_train"],
+        )
+
+    # -------------------------------------------------------
+    # HYPERPARAMETER SEARCH
+    # -------------------------------------------------------
+
+    def tune_model(
+        self,
+        prepared_data: dict,
+        model_name: str = "Random Forest",
+    ):
+        """
+        Search a small hyperparameter grid on the TRAINING fold.
+
+        The test fold is never touched, so whatever improvement
+        this finds is not bought by look-ahead.
+
+        Returns
+        -------
+        tuple(estimator, dict)
+            The refitted best estimator and the search summary
+            (best params, best CV score, number of candidates).
+        """
+
+        grid = TUNING_GRIDS.get(model_name)
+
+        if not grid:
+            raise ValueError(
+                f"No tuning grid configured for {model_name!r}. "
+                f"Available: {list(TUNING_GRIDS)}"
+            )
+
+        logger.info(
+            "Tuning %s over %d candidates (cv=%d)...",
+            model_name,
+            TUNING.get("n_iter", 8),
+            TUNING.get("cv", 3),
+        )
+
+        X_train, y_train = self._cv_data_for(
+            prepared_data,
+            model_name,
+        )
+
+        if model_name == "Logistic Regression":
+
+            estimator = Pipeline(
+                steps=[
+                    ("scaler", StandardScaler()),
+                    (
+                        "classifier",
+                        LogisticRegression(
+                            random_state=self.random_state,
+                            max_iter=1000,
+                            solver="lbfgs",
+                        ),
+                    ),
+                ]
+            )
+
+        else:
+
+            estimator = RandomForestClassifier(
+                random_state=self.random_state,
+                n_jobs=-1,
+            )
+
+        total_candidates = 1
+
+        for values in grid.values():
+            total_candidates *= len(values)
+
+        search = RandomizedSearchCV(
+            estimator=estimator,
+            param_distributions=grid,
+            n_iter=min(
+                TUNING.get("n_iter", 8),
+                total_candidates,
+            ),
+            scoring=TUNING.get("scoring", "f1_macro"),
+            cv=StratifiedKFold(
+                n_splits=TUNING.get("cv", 3),
+                shuffle=True,
+                random_state=self.random_state,
+            ),
+            random_state=TUNING.get("random_state", self.random_state),
+            n_jobs=-1,
+            refit=True,
+        )
+
+        search.fit(X_train, y_train)
+
+        summary = {
+            "best_params": {
+                key: (
+                    value
+                    if isinstance(value, (int, float, str, type(None)))
+                    else str(value)
+                )
+                for key, value in search.best_params_.items()
+            },
+            "best_cv_score": float(search.best_score_),
+            "candidates_evaluated": len(search.cv_results_["params"]),
+            "scoring": TUNING.get("scoring", "f1_macro"),
+        }
+
+        logger.info(
+            "Tuned %s: %s (cv %s=%.4f)",
+            model_name,
+            summary["best_params"],
+            summary["scoring"],
+            summary["best_cv_score"],
+        )
+
+        return search.best_estimator_, summary
+
+    # -------------------------------------------------------
+
+    def train_tuned_random_forest(
+        self,
+        prepared_data: dict,
+    ):
+        """Random Forest with a searched configuration."""
+
+        estimator, _ = self.tune_model(
+            prepared_data,
+            "Random Forest",
+        )
+
+        return estimator
+
+    # -------------------------------------------------------
+
+    def train_tuned_logistic_regression(
+        self,
+        prepared_data: dict,
+    ):
+        """Logistic Regression with a searched configuration."""
+
+        estimator, _ = self.tune_model(
+            prepared_data,
+            "Logistic Regression",
+        )
+
+        return estimator
+
+    # -------------------------------------------------------
+    # PROBABILITY CALIBRATION
+    # -------------------------------------------------------
+
+    def train_calibrated(
+        self,
+        prepared_data: dict,
+        model_name: str = "Random Forest",
+    ):
+        """
+        Wrap a model in CalibratedClassifierCV (sigmoid/Platt).
+
+        Why: the two models used to disagree sharply on borderline
+        students -- Logistic Regression said "High" at 100%
+        confidence while Random Forest said "Average" at 63% for
+        the same student. Their probabilities were not comparable.
+        Calibration maps raw scores onto frequencies a lecturer can
+        read: "of students the model gives 0.8 to, about 80% really
+        are in that band".
+
+        Calibration is fitted with internal cross-validation on the
+        TRAINING fold only.
+        """
+
+        logger.info(
+            "Calibrating %s (%s)...",
+            model_name,
+            CALIBRATION.get("method", "sigmoid"),
+        )
+
+        if model_name == "Logistic Regression":
+
+            # Scale inside the pipeline so the calibrated wrapper
+            # consumes the original, unscaled features.
+            base = Pipeline(
+                steps=[
+                    ("scaler", StandardScaler()),
+                    (
+                        "classifier",
+                        LogisticRegression(
+                            random_state=self.random_state,
+                            max_iter=1000,
+                            solver="lbfgs",
+                        ),
+                    ),
+                ]
+            )
+
+            X_train = prepared_data["X_train_original"]
+
+        else:
+
+            base = RandomForestClassifier(
+                n_estimators=200,
+                random_state=self.random_state,
+                n_jobs=-1,
+            )
+
+            X_train = prepared_data["X_train_original"]
+
+        calibrated = CalibratedClassifierCV(
+            estimator=base,
+            method=CALIBRATION.get("method", "sigmoid"),
+            cv=CALIBRATION.get("cv", 3),
+        )
+
+        calibrated.fit(X_train, prepared_data["y_train"])
+
+        logger.info("%s calibrated.", model_name)
+
+        return calibrated
+
+    # -------------------------------------------------------
+
+    def train_calibrated_random_forest(self, prepared_data: dict):
+        """Calibrated Random Forest."""
+
+        return self.train_calibrated(
+            prepared_data, "Random Forest"
+        )
+
+    # -------------------------------------------------------
+
+    def train_calibrated_logistic_regression(
+        self,
+        prepared_data: dict,
+    ):
+        """Calibrated Logistic Regression."""
+
+        return self.train_calibrated(
+            prepared_data, "Logistic Regression"
         )
 
     # =======================================================

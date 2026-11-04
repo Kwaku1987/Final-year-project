@@ -35,10 +35,11 @@ def render_training_page(controller: DashboardController) -> None:
 
     st.caption(
         "This runs the full pipeline: builds the target labels, "
-        "prepares features, trains Logistic Regression, Random "
-        "Forest and a soft-voting ensemble, cross-validates them, "
-        "selects the best model, and saves it for Lecturers to "
-        "use in Assessment Mode."
+        "prepares features, trains six candidate models (Logistic "
+        "Regression, Random Forest, a soft-voting ensemble, a "
+        "hyperparameter-tuned forest and two calibrated models), "
+        "cross-validates them, selects the best by macro F1, and "
+        "saves it for Lecturers to use in Assessment Mode."
     )
 
     # ------------------------------------------------------
@@ -156,6 +157,16 @@ def render_training_page(controller: DashboardController) -> None:
                     if metrics.get("roc_auc") is not None
                     else None
                 ),
+                "Brier ↓": (
+                    round(metrics["brier_score"], 4)
+                    if metrics.get("brier_score") is not None
+                    else None
+                ),
+                "ECE ↓": (
+                    round(metrics["calibration_error"], 4)
+                    if metrics.get("calibration_error") is not None
+                    else None
+                ),
                 "Baseline": round(
                     metrics.get("baseline_majority", 0), 4
                 ),
@@ -196,6 +207,31 @@ def render_training_page(controller: DashboardController) -> None:
                 "only -- the columns above are held-out test "
                 "metrics."
             )
+
+            st.caption(
+                "**Brier** and **ECE** measure whether the confidence "
+                "figure can be trusted (lower is better): Brier is the "
+                "squared error of the probability vector, ECE the gap "
+                "between stated confidence and observed accuracy. "
+                "Calibrated models are marked in the model name."
+            )
+
+            framework_tuning = getattr(
+                controller.framework, "tuning_results", {}
+            )
+
+            if framework_tuning:
+
+                with st.expander(
+                    "🔎 Hyperparameter search (training fold only)",
+                    expanded=False,
+                ):
+
+                    for name, summary in framework_tuning.items():
+
+                        st.write(f"**{name}**")
+
+                        st.json(summary)
 
             if controller.target_definition == "cpi":
 
