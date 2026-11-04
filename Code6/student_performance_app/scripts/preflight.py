@@ -163,7 +163,7 @@ def check_pins() -> None:
             )
 
 
-def check_model_bundle() -> None:
+def check_model_bundle(production: bool = False) -> None:
 
     model_path = APP_DIR / "models" / "best_model.pkl"
 
@@ -205,6 +205,59 @@ def check_model_bundle() -> None:
                 "bundle predates v3.0: it was trained on the legacy "
                 "circular target. Retrain before quoting its metrics.",
             )
+
+        # v7.2: is the bundle allowed to be the production model?
+        definition = bundle.get("target_definition", "cpi")
+
+        role = bundle.get(
+            "bundle_role",
+            "rule_reconstruction_baseline"
+            if definition == "cpi"
+            else "unknown",
+        )
+
+        if role == "rule_reconstruction_baseline":
+
+            record(
+                FAIL if production else WARN,
+                "model",
+                f"bundle_role={role} (target={definition!r}): the label "
+                "is computed from the predictors, so its metrics measure "
+                "rule reconstruction. Serve an exam_band bundle instead.",
+            )
+
+        elif role == "unknown":
+
+            record(
+                WARN,
+                "model",
+                "bundle records no bundle_role (written before v7.2); "
+                "retrain to get a certified production bundle",
+            )
+
+        else:
+            record(OK, "model", f"bundle_role={role}")
+
+        split = bundle.get("split") or {}
+
+        if split.get("strategy") == "temporal":
+            record(
+                OK,
+                "model",
+                "metrics come from a temporal split: "
+                f"train {', '.join(split.get('train_periods') or [])} -> "
+                f"test {', '.join(split.get('test_periods') or [])}",
+            )
+        elif split.get("strategy") == "random":
+            record(
+                WARN,
+                "model",
+                "metrics come from a random split, so they measure fit "
+                "within one cohort -- run --split temporal before "
+                "claiming forward generalisation",
+            )
+        else:
+            record(WARN, "model", "bundle records no split provenance")
 
         metrics = bundle.get("metrics") or {}
 
@@ -441,7 +494,7 @@ def main(argv=None) -> int:
     check_python()
     check_imports()
     check_pins()
-    check_model_bundle()
+    check_model_bundle(production=args.production)
     check_storage()
     check_security(production=args.production)
     check_configuration()

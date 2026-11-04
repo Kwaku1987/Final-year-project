@@ -203,10 +203,12 @@ families. The UI says so.
    confidence; it cannot add information, and on the reference cohort it slightly
    increased Brier score and ECE. Whether to keep it is an empirical decision to
    be made on the real cohort from Table 5.4 of the results chapter.
-8. **The 16.9 MB bundle in `models/` is the LEGACY model** trained on the
-   circular CPI target (see `docs/MODEL_CARD.md`). It is kept so Assessment Mode
-   can be demonstrated; retrain with `scripts/train_model.py` before quoting any
-   number from it.
+8. **The bundle in `models/` is a synthetic-cohort `exam_band` model** (v7.2,
+   `bundle_role="production"`, temporal split). It is compliant — no label-source
+   leakage — but it is trained on invented data, so its numbers describe the
+   generator. Retrain with `scripts/train_model.py` before quoting anything from
+   it. The legacy CPI artefact is still in git history and remains readable for
+   comparison; it can no longer be saved as a production bundle.
 
 ---
 

@@ -6,6 +6,65 @@ All notable changes to this project. Format loosely follows
 
 ---
 
+## [3.3.1] — 2026-11-04 — "Enforcement pass"
+
+The 3.1–3.3 standards were documented and mostly implemented; several of them
+were not *enforced*, meaning a rule could be broken without anything failing.
+This pass closes that gap and replaces the shipped bundle with a compliant one.
+Full audit: [`docs/V3_3_COMPLIANCE_REVIEW.md`](docs/V3_3_COMPLIANCE_REVIEW.md).
+
+### Added
+
+* **Signal-integrity controls** (`tests/test_signal_integrity.py`, 14 tests). The
+  same pipeline is run on an intact cohort and on the same cohort with the exam
+  scores shuffled: 0.671 macro F1 / 0.847 ROC-AUC versus **0.289 / 0.507**. The
+  suite now fails if the pipeline scores above chance on noise, if it fails to
+  beat the majority baseline on signal, or if the two regimes come within 0.20
+  macro F1 of each other. This is the direct antidote to the legacy 97.8 %:
+  a pipeline that reports accuracy on a shuffled target is measuring its own
+  preprocessing.
+* **A leaky target can no longer be exported as the production bundle.**
+  `save_best_model()` raises unless `allow_leaky_target=True`; the CLI exits 2
+  with the reason before doing any work. A deliberate baseline export is stamped
+  `bundle_role="rule_reconstruction_baseline"` + `label_source_in_predictors=true`
+  and carries the warning inside its own caveats.
+* **Bundle provenance** (`MODEL_BUNDLE_VERSION` 7.1 → 7.2): `bundle_role`,
+  `label_source_in_predictors`, `split` (strategy + periods + row counts) and
+  `fairness` now travel with the model. `load_best_model()` restores them,
+  infers the role for older bundles, and attaches a RULE-RECONSTRUCTION caveat
+  where it applies.
+* **`preflight.py` certifies the bundle**: `--production` now fails on a
+  rule-reconstruction bundle, warns when the split provenance is missing or
+  random-only, and reports the temporal periods the metrics came from.
+* **Label-source invariance test**: two students identical except `exam_score`
+  must receive the same label and confidence to full precision.
+* **CLI**: `train_model.py --allow-leaky-target`, `--min-support`.
+
+### Changed
+
+* **The committed bundle is now a certified production model**: `exam_band`,
+  `bundle_role="production"`, temporal split (1,510 train → 490 test), Soft-Voting
+  Ensemble, macro F1 0.655, lift +0.29 over a 0.363 baseline, fairness report
+  embedded. The v6.0 legacy CPI artefact (the source of the 97.8 % figure) is
+  gone from the working tree and remains only in git history.
+* **`joblib.dump(..., compress=3)`**: six fitted candidates — two of them
+  calibrated wrappers that duplicate their base estimator — made the uncompressed
+  bundle ~50 MB. Compressed it is **9.9 MB**, smaller than the legacy file it
+  replaced, with a 1.6 s load.
+* `MODEL_CARD.md` §1 rewritten around the new artefact, including why the 97.8 %
+  number is unreachable now rather than merely discouraged.
+* **100 tests** (was 86).
+
+### Unchanged (deliberately)
+
+* The fixed 60/80 threshold policy still exists behind `--label-method fixed`:
+  the argument that it was wrong needs a reproducible comparison.
+* The 97.8 % figure still appears in the "why this was wrong" sections and in one
+  comparison row of the Results chapter, labelled as the rejected number.
+  Deleting the evidence is not the same as fixing the method.
+
+---
+
 ## [3.3] — 2026-11-04 — "Temporal validation and fairness disaggregation"
 
 The two items that 3.1 and 3.2 listed as limitations are now implemented,

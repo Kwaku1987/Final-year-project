@@ -9,25 +9,41 @@ trained on, what it can and cannot be used for.
 
 ## 1. Status of the committed bundle
 
+**Certified production bundle.** Since v3.3.1 the shipped file is an
+`exam_band` model, not the legacy CPI artefact.
+
 | Field | Value (read directly from the pickle) |
 |---|---|
-| Bundle version | `6.0` (pre-v3.0) |
-| Created | `2026-08-25 21:37:40` |
-| Training samples | 10,000 |
-| scikit-learn version | `1.9.0` |
-| Algorithms | Logistic Regression (**selected as best**) and Random Forest (200 trees) |
-| Recorded metrics | accuracy 0.9780 · precision 0.9778 · recall 0.9780 · F1 0.9779 |
-| Predictors | all seven columns, **including `exam_score`** |
-| Target | Composite Performance Index band (legacy definition) |
+| Bundle version | `7.2` |
+| `bundle_role` | `production` |
+| `label_source_in_predictors` | `false` |
+| Target | `exam_band` — Low/Average/High bands of the **examination score**, quantile thresholds **64.67 / 80.34** |
+| Predictors | six term-time columns; **`exam_score` is not among them** |
+| Training samples | 2,000 (1,510 train / 490 test) |
+| Validation | **temporal** — trained on 2024/25-S1 + 2024/25-S2, tested on 2025/26-S1 |
+| Algorithms in the bundle | Logistic Regression, Random Forest, Soft-Voting Ensemble, Random Forest (Tuned), Random Forest (Calibrated), Logistic Regression (Calibrated) — **Soft-Voting Ensemble selected** |
+| Hold-out metrics | accuracy 0.653 · macro F1 **0.655** · balanced accuracy 0.660 · ROC-AUC 0.837 · Brier 0.441 · ECE 0.027 |
+| Baseline | majority class 0.363 → **lift +0.29** |
+| Fairness | embedded: gender gap 0.065, programme 0.053, entry qualification 0.046 (macro F1) |
+| scikit-learn | `1.9.1` (pinned in `requirements.txt`) |
+| Data | **synthetic** — `scripts/make_synthetic_dataset.py --rows 2000`, seed 42 |
 
-> ⚠️ **This bundle is a legacy artefact and its headline numbers must not be
-> presented as predictive accuracy.** It was trained on a target computed from
-> the same seven columns it predicts from, so 97.8 % measures how well the model
-> reproduces the CPI formula. See `docs/METHODOLOGY.md` §1.
->
-> It is retained only so that Assessment Mode can be demonstrated without
-> retraining. The app labels it as legacy at load time
-> (`framework.legacy_bundle == True`) and attaches that caveat to every report.
+> ⚠️ **The metrics describe the synthetic cohort.** They are not evidence about
+> real students, and the temporal result is benign because the generator's
+> semester effect is an additive shift (see `docs/TEMPORAL_AND_FAIRNESS.md` §2).
+> Retrain on a real, de-identified cohort before quoting any figure.
+
+**Why the 97.8 % figure is gone.** It came from a target computed from the same
+columns the model consumed (the CPI formula). That is rule reconstruction, not
+prediction, and since v3.2 it cannot reach a production bundle at all:
+`save_best_model()` refuses a leaky target unless `allow_leaky_target=True` is
+passed explicitly, and when it is, the bundle is stamped
+`bundle_role="rule_reconstruction_baseline"` and carries the warning in its own
+`caveats`. `scripts/preflight.py --production` fails on such a bundle.
+
+**Why the committed artefact is still a compromise.** It is trained on synthetic
+data, and its labels come from the examination score of an invented cohort. It
+is the honest demonstration model, not a validated predictor.
 
 ### Why the pickle is pinned to scikit-learn 1.9.x
 
@@ -43,9 +59,14 @@ an actionable message instead of a stack trace. If you retrain, re-pin.
 
 ### Size
 
-16.9 MB, committed to Git. That is tolerable once, not as a habit: future
-bundles are covered by `.gitignore` (`models/*.pkl`), and a bundle this size
-belongs in a release asset or Git LFS rather than in the history.
+9.9 MB committed to Git (six fitted candidates, two of them calibrated, written
+with `joblib.dump(..., compress=3)`; uncompressed it is ~50 MB). That is smaller
+than the legacy artefact it replaces, despite carrying six models, the tuning
+summary, the fairness report and the explanation background.
+
+Bundles are build outputs: `.gitignore` covers `models/*.pkl` and whitelists only
+`best_model.pkl`. For anything larger, use a release asset or Git LFS rather than
+the repository history.
 
 ---
 
@@ -74,7 +95,8 @@ belongs in a release asset or Git LFS rather than in the history.
 * **v3.0 and later:** supplied by the operator of the system. The repository
   ships **no real student data**. `scripts/make_synthetic_dataset.py` generates
   a clearly-labelled synthetic cohort for demonstration and testing only.
-* **The committed legacy bundle:** 10,000 records, provenance not recorded in
+* **The replaced legacy bundle (still in git history):** 10,000 records,
+  provenance not recorded in
   the repository. Feature means recoverable from the stored scaler:
 
   | Feature | Mean | SD |

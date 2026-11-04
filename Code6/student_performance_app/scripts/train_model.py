@@ -161,6 +161,27 @@ def main(argv=None) -> int:
     )
 
     parser.add_argument(
+        "--allow-leaky-target",
+        action="store_true",
+        help=(
+            "export a rule-reconstruction baseline. Required for "
+            "--definition cpi: that label is a formula over the "
+            "predictors, so its metrics describe rule reproduction, not "
+            "prediction, and it may never be reported as accuracy"
+        ),
+    )
+
+    parser.add_argument(
+        "--min-support",
+        type=int,
+        default=30,
+        help=(
+            "minimum subgroup size before a fairness row counts as "
+            "reliable (default: 30)"
+        ),
+    )
+
+    parser.add_argument(
         "--split",
         choices=("random", "temporal"),
         default="random",
@@ -202,6 +223,26 @@ def main(argv=None) -> int:
     )
 
     args = parser.parse_args(argv)
+
+    if args.definition == "cpi" and not args.allow_leaky_target:
+
+        print(
+            "REFUSED: --definition cpi builds the label from the same "
+            "columns used as predictors (CPI is a weighted average of "
+            "attendance, study hours, assignments, tests and the exam). "
+            "Its ~97% 'accuracy' is rule reconstruction, not prediction, "
+            "and it is banned from production metrics.\n"
+            "\n"
+            "  production model:      --definition exam_band (default)\n"
+            "  baseline experiment:   --definition cpi --allow-leaky-target\n"
+            "\n"
+            "The baseline export is labelled bundle_role="
+            "\"rule_reconstruction_baseline\" so nothing can quote it "
+            "as accuracy by accident.",
+            file=sys.stderr,
+        )
+
+        return 2
 
     # Apply overrides before importing config-dependent modules.
     if args.definition:
@@ -249,9 +290,14 @@ def main(argv=None) -> int:
 
         if args.fairness:
 
-            framework.evaluate_subgroups()
+            framework.evaluate_subgroups(
+                min_support=args.min_support
+            )
 
-        saved_to = framework.save_best_model(str(args.out))
+        saved_to = framework.save_best_model(
+            str(args.out),
+            allow_leaky_target=args.allow_leaky_target,
+        )
 
     except Exception as error:
 
@@ -260,6 +306,17 @@ def main(argv=None) -> int:
         return 1
 
     report = summarize(framework)
+
+    if framework.target_definition == "cpi":
+
+        print(
+            "=" * 66,
+            "\nRULE-RECONSTRUCTION BASELINE — NOT A PREDICTIVE MODEL\n"
+            "The target is computed from the predictors, so the metrics "
+            "below\nmeasure formula reproduction. Do not report them as "
+            "accuracy.\n" + "=" * 66,
+            file=sys.stderr,
+        )
 
     logger.info("Split: %s", getattr(framework, "split_summary", args.split))
 

@@ -221,7 +221,7 @@ class StudentPerformanceFramework:
 
     # Bumped when the saved model bundle's structure changes in
     # a way that matters for consumers reading model_version.
-    MODEL_BUNDLE_VERSION = "7.1"
+    MODEL_BUNDLE_VERSION = "7.2"
 
     def __init__(
         self,
@@ -341,6 +341,15 @@ class StudentPerformanceFramework:
 
         # True when the loaded bundle predates v3.0.
         self.legacy_bundle = False
+
+        # "production" | "rule_reconstruction_baseline" | "unknown".
+        # A rule-reconstruction bundle may be demonstrated but its
+        # metrics may never be quoted as predictive accuracy.
+        self.bundle_role: str = "unknown"
+
+        # How the metrics in this session's / bundle's model were
+        # produced (random split or whole periods held out).
+        self.bundle_split: Optional[Dict[str, Any]] = None
 
         # Instance-level (SHAP) explanations, plus the sample of
         # training rows they are measured against.
@@ -1561,6 +1570,21 @@ class StudentPerformanceFramework:
                 "scripts/train_model.py for a predictive model."
             )
 
+        if (
+            is_leaky_definition(self.target_definition)
+            and not getattr(self, "legacy_bundle", False)
+        ):
+
+            caveats.append(
+                "RULE-RECONSTRUCTION BUNDLE (bundle_role="
+                f"{getattr(self, 'bundle_role', 'unknown')!r}): the label "
+                "is a formula over the same columns the model consumes, "
+                "so every score here measures how well the model "
+                "reproduces that formula. These numbers must not be "
+                "reported as predictive accuracy and must never appear "
+                "in a production metric table."
+            )
+
         if self.target_description:
 
             caveats.append(
@@ -1780,6 +1804,7 @@ class StudentPerformanceFramework:
     def save_best_model(
         self,
         model_path: str = "models/best_model.pkl",
+        allow_leaky_target: bool = False,
     ) -> str:
         """
         Save ALL currently trained models as one self-contained
@@ -1787,6 +1812,19 @@ class StudentPerformanceFramework:
         load the bundle and still toggle between models via
         predict(student_data, model_name=...), not just use the
         auto-selected best model.
+
+        Parameters
+        ----------
+        model_path
+            Where to write the bundle.
+        allow_leaky_target
+            The legacy ``cpi`` definition computes the label from the
+            same columns used as predictors, so its scores measure
+            rule reconstruction, not prediction. Saving such a model
+            as the production bundle is refused unless this is
+            explicitly set -- a bundle named ``best_model.pkl`` is
+            what Assessment Mode serves to lecturers, and it must not
+            quietly be a rule reconstructor.
 
         Returns
         -------
@@ -1799,6 +1837,22 @@ class StudentPerformanceFramework:
             raise ValueError(
                 "No trained model available to save. "
                 "Train and evaluate models first."
+            )
+
+        leaky = is_leaky_definition(self.target_definition)
+
+        if leaky and not allow_leaky_target:
+
+            raise ValueError(
+                f"Refusing to save a {self.target_definition!r} model as "
+                "the production bundle: this target is computed from the "
+                "same columns used as predictors, so its metrics measure "
+                "how well the model reproduces the labelling rule, not "
+                "how well it predicts an unseen outcome. Train with "
+                "definition='exam_band' for a production model, or pass "
+                "allow_leaky_target=True (CLI: --allow-leaky-target) to "
+                "export this explicitly as a rule-reconstruction "
+                "baseline."
             )
 
         path = Path(model_path)
@@ -1909,6 +1963,27 @@ class StudentPerformanceFramework:
 
             "caveats": self.methodology_caveats(),
 
+            # ---- v7.2: provenance of the claim, not just the model ----
+            # "production" means the label was built from a column the
+            # model never sees. "rule_reconstruction_baseline" means the
+            # label is a formula over the predictors: the metrics
+            # describe rule reproduction, and nothing may quote them as
+            # predictive accuracy.
+            "bundle_role": (
+                "rule_reconstruction_baseline"
+                if leaky
+                else "production"
+            ),
+
+            "label_source_in_predictors": leaky,
+
+            # How the metrics were produced: random split or whole
+            # academic periods held out. A bundle whose split is not
+            # recorded cannot be compared with another.
+            "split": self.split_metadata,
+
+            "fairness": self.fairness_report,
+
             # Background sample for instance-level explanations,
             # so SHAP still works after loading in a new session.
             "explanation_background": (
@@ -1921,7 +1996,11 @@ class StudentPerformanceFramework:
 
         }
 
-        joblib.dump(bundle, path)
+        # compress=3 keeps the bundle small enough to commit: six
+        # fitted candidates (two of them calibrated, which duplicates
+        # their base estimator) otherwise run to ~50 MB for a 2,000-row
+        # cohort. joblib.load handles the compressed form transparently.
+        joblib.dump(bundle, path, compress=3)
 
         self.model_version = self.MODEL_BUNDLE_VERSION
 
@@ -2094,6 +2173,22 @@ class StudentPerformanceFramework:
         self.legacy_bundle = legacy
 
         self.target_description = bundle.get("target_info")
+
+        # Provenance of the claim. Bundles written before v7.2 have
+        # no bundle_role: infer it from whether the target is leaky,
+        # so an old CPI bundle is still labelled correctly.
+        self.bundle_role = str(
+            bundle.get(
+                "bundle_role",
+                "rule_reconstruction_baseline"
+                if is_leaky_definition(self.target_definition)
+                else "production",
+            )
+        )
+
+        self.bundle_split = bundle.get("split")
+
+        self.fairness_report = bundle.get("fairness") or None
 
         self.cross_validation = bundle.get(
             "cross_validation",
