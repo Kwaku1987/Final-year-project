@@ -41,8 +41,23 @@ def render_batch_prediction_page(
     st.caption(
         f"Model: **{controller.best_model_name}**. Upload a "
         "roster with a column for each of: "
-        + ", ".join(FEATURE_COLUMNS)
+        + ", ".join(controller.required_features)
+        + "."
     )
+
+    excluded = [
+        column
+        for column in FEATURE_COLUMNS
+        if column not in controller.required_features
+    ]
+
+    if excluded:
+
+        st.caption(
+            "Not required (the model predicts them): "
+            + ", ".join(excluded)
+            + "."
+        )
 
     available_models = controller.get_available_models()
 

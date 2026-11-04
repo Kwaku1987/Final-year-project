@@ -71,7 +71,10 @@ from dashboard.pages.mode_selection_page import (
     render_mode_selection_page,
 )
 
+from utils.auth import is_admin_unlocked
 from utils.styles import load_theme
+
+from dashboard.application_state import ApplicationState
 
 
 # ============================================================
@@ -136,7 +139,22 @@ _PAGE_RENDERERS = {
 
 def main() -> None:
 
+    # ApplicationState lives in st.session_state; initialise it
+    # before anything reads or writes it.
+    ApplicationState.initialize()
+
     controller = get_controller()
+
+    # If the administrator session has been re-locked (mode
+    # switch, reset, or a stale session), drop back to the mode
+    # screen rather than rendering Training Mode pages to a
+    # visitor who is no longer authorised.
+    if (
+        controller.application_mode == "administrator"
+        and not is_admin_unlocked()
+    ):
+
+        controller.application_mode = None
 
     # Mode-selection gate: nothing else renders until the user
     # has chosen Administrator (Training Mode) or Lecturer
@@ -154,6 +172,7 @@ def main() -> None:
     selected_page = Sidebar.render(
         st.session_state.current_page,
         mode=controller.application_mode,
+        controller=controller,
     )
 
     st.session_state.current_page = selected_page

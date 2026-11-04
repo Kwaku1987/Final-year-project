@@ -198,6 +198,141 @@ class DashboardController:
 
         return exists
 
+    # ========================================================
+    # METHODOLOGY / DIAGNOSTIC ACCESSORS (v3.0)
+    # ========================================================
+
+    @property
+    def target_definition(self) -> str:
+        """Active target definition ("exam_band" or "cpi")."""
+
+        return getattr(
+            self.framework,
+            "target_definition",
+            "exam_band",
+        )
+
+    @property
+    def target_info(self) -> Optional[dict]:
+        """Thresholds, method and class distribution of the target."""
+
+        return getattr(
+            self.framework,
+            "target_description",
+            None,
+        )
+
+    @property
+    def validation_warnings(self) -> list:
+        """Data-quality warnings raised while validating the upload."""
+
+        return list(
+            getattr(
+                self.framework,
+                "validator_warnings",
+                [],
+            )
+        )
+
+    @property
+    def required_features(self) -> list:
+        """
+        The predictors the trained model actually expects.
+
+        This is NOT always the full feature list: under the
+        default "exam_band" definition the exam score is the
+        label, so it is excluded from the inputs.
+        """
+
+        return list(
+            getattr(
+                self.framework,
+                "required_features",
+                [],
+            )
+        )
+
+    @property
+    def cross_validation(self) -> dict:
+        """Cross-validation scores per model."""
+
+        return dict(
+            getattr(
+                self.framework,
+                "cross_validation",
+                {},
+            )
+        )
+
+    @property
+    def model_metrics(self) -> Optional[dict]:
+        """Metrics of the selected best model."""
+
+        return getattr(
+            self.framework,
+            "model_metrics",
+            None,
+        )
+
+    # --------------------------------------------------------
+
+    def methodology_caveats(self) -> list:
+        """Caveats that must accompany any reported metric."""
+
+        if hasattr(self.framework, "methodology_caveats"):
+
+            return self.framework.methodology_caveats()
+
+        return []
+
+    # --------------------------------------------------------
+
+    def run_eda(self) -> Optional[dict]:
+        """
+        Run the EDA suite (backend/eda/eda_analyzer.py) on the
+        loaded dataset and return its structured report.
+
+        Previously this 657-line module was dead code; the
+        dataset page now surfaces its findings.
+        """
+
+        dataframe = self.state.get_dataset()
+
+        if dataframe is None:
+
+            return None
+
+        try:
+
+            from backend.eda.eda_analyzer import EDAAnalyzer
+
+            from backend.cpi.cpi_engine import CPIEngine
+
+            from backend.config import TARGET_COLUMN
+
+            working = dataframe.copy()
+
+            # EDA reports a target distribution, but labels are
+            # only created during prepare_data(). Build them on a
+            # copy for analysis only -- the stored dataset is not
+            # modified, so the training pipeline still owns
+            # label generation.
+            if TARGET_COLUMN not in working.columns:
+
+                engine = CPIEngine(
+                    target_definition=self.target_definition
+                )
+
+                working = engine.build_target_variable(working)
+
+            return EDAAnalyzer(working).generate_report()
+
+        except Exception as error:
+
+            logger.warning("EDA failed: %s", error)
+
+            return {"error": str(error)}
+
     def set_mode(self, mode: str) -> None:
         """
         Choose Administrator (Training Mode) or Lecturer
@@ -770,8 +905,9 @@ class DashboardController:
         Parameters
         ----------
         dataframe:
-            Must contain a column for every entry in
-            FEATURE_COLUMNS. Extra columns are preserved and
+            Must contain a column for every predictor the model
+            expects (framework.required_features). Extra columns,
+            including the target source column, are preserved and
             carried through to the output unchanged.
 
         model_name:
@@ -787,18 +923,29 @@ class DashboardController:
             "Risk Priority", "Risk Score".
         """
 
-        from backend.config import FEATURE_COLUMNS
+        # v3.0: require only the predictors the model was
+        # actually trained on. The target source column (the
+        # exam score, under the default definition) need not be
+        # present -- if it is, it is simply not used.
+        required = list(
+            getattr(
+                self.framework,
+                "required_features",
+                [],
+            )
+        )
 
         missing = [
             column
-            for column in FEATURE_COLUMNS
+            for column in required
             if column not in dataframe.columns
         ]
 
         if missing:
 
             raise ValueError(
-                f"Missing required columns: {missing}"
+                f"Missing required columns: {missing}. "
+                f"This model expects: {required}"
             )
 
         logger.info(
@@ -820,7 +967,7 @@ class DashboardController:
 
             student_data = {
                 column: float(row[column])
-                for column in FEATURE_COLUMNS
+                for column in required
             }
 
             try:

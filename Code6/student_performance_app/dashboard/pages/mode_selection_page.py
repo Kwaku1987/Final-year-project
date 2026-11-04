@@ -18,6 +18,13 @@ import streamlit as st
 
 from dashboard.dashboard_controller import DashboardController
 
+from utils.auth import (
+    attempts_remaining,
+    is_admin_unlocked,
+    is_using_default_password,
+    verify_admin_password,
+)
+
 
 def render_mode_selection_page(
     controller: DashboardController,
@@ -44,20 +51,54 @@ def render_mode_selection_page(
         st.caption("For Administrators")
 
         st.write(
-            "Upload a dataset, generate the Composite "
-            "Performance Index, train and compare models, and "
-            "save the best one for lecturers to use."
+            "Upload a dataset, build the target labels, train "
+            "and compare models, and save the best one for "
+            "lecturers to use."
         )
 
-        if st.button(
+        if is_using_default_password():
+
+            st.caption(
+                "🔐 Development password in use "
+                "(`change-me-admin`). Set "
+                "`SPAS_ADMIN_PASSWORD_HASH` before deploying."
+            )
+
+        password = st.text_input(
+            "Administrator password",
+            type="password",
+            key="admin_password_input",
+            help=(
+                "Training Mode can retrain and delete the model "
+                "lecturers depend on, so it is password-gated."
+            ),
+        )
+
+        if attempts_remaining() <= 0:
+
+            st.error(
+                "Too many failed attempts in this session. "
+                "Reload the page to try again."
+            )
+
+        elif st.button(
             "Enter Training Mode",
             type="primary",
             use_container_width=True,
         ):
 
-            controller.set_mode("administrator")
+            if verify_admin_password(password):
 
-            st.rerun()
+                controller.set_mode("administrator")
+
+                st.rerun()
+
+            else:
+
+                st.error(
+                    "Incorrect password. "
+                    f"{attempts_remaining()} attempt(s) left."
+                )
 
     with col2:
 
@@ -68,7 +109,7 @@ def render_mode_selection_page(
         st.write(
             "Load the saved model and assess individual "
             "students by entering their details -- no training "
-            "required."
+            "required, and no access to the training data."
         )
 
         model_exists = controller.framework.has_saved_model(

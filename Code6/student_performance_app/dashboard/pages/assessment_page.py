@@ -19,7 +19,39 @@ import pandas as pd
 import streamlit as st
 
 from dashboard.dashboard_controller import DashboardController
-from backend.config import CPI_CONFIG
+from backend.config import CPI_CONFIG, FEATURE_COLUMNS
+
+
+# ================================================================
+# INPUT SPECS
+# ================================================================
+# label, minimum, maximum, default -- per feature column.
+# ================================================================
+
+INPUT_SPECS = {
+    "attendance_rate": ("Attendance Rate (%)", 0, 100, 85),
+    "study_hours": (
+        "Daily Study Hours",
+        0.0,
+        float(CPI_CONFIG["study_hours_max"]) * 2,
+        4.0,
+    ),
+    "sleep_hours": (
+        "Daily Sleep Hours",
+        0.0,
+        float(CPI_CONFIG["sleep_hours_max"]) * 2,
+        7.0,
+    ),
+    "social_media_hours": (
+        "Daily Social Media Hours",
+        0.0,
+        float(CPI_CONFIG["social_media_hours_max"]) * 2,
+        2.0,
+    ),
+    "assignment_score": ("Assignment Score (%)", 0, 100, 75),
+    "test_score": ("Test Score (%)", 0, 100, 75),
+    "exam_score": ("Exam Score (%)", 0, 100, 75),
+}
 
 
 def render_assessment_page(controller: DashboardController) -> None:
@@ -132,42 +164,47 @@ def render_assessment_page(controller: DashboardController) -> None:
 
         st.subheader("Student Details")
 
-        col1, col2 = st.columns(2)
+        # v3.0: ask only for the columns the loaded model was
+        # trained on. Under the default "exam_band" definition the
+        # examination score is the label, not an input.
+        features = controller.required_features
 
-        with col1:
+        excluded = [
+            column
+            for column in FEATURE_COLUMNS
+            if column not in features
+        ]
 
-            attendance_rate = st.slider(
-                "Attendance Rate (%)", 0, 100, 85,
+        if excluded:
+
+            st.caption(
+                "Not requested because the model predicts it: "
+                + ", ".join(excluded)
+                + "."
             )
 
-            study_hours = st.slider(
-                "Daily Study Hours", 0.0,
-                float(CPI_CONFIG["study_hours_max"]) * 2, 4.0,
+        columns = st.columns(2)
+
+        student_data = {}
+
+        for index, feature in enumerate(features):
+
+            label, minimum, maximum, default = (
+                INPUT_SPECS.get(
+                    feature,
+                    (feature.replace("_", " ").title(), 0, 100, 0),
+                )
             )
 
-            sleep_hours = st.slider(
-                "Daily Sleep Hours", 0.0,
-                float(CPI_CONFIG["sleep_hours_max"]) * 2, 7.0,
-            )
+            with columns[index % 2]:
 
-            social_media_hours = st.slider(
-                "Daily Social Media Hours", 0.0,
-                float(CPI_CONFIG["social_media_hours_max"]) * 2, 2.0,
-            )
-
-        with col2:
-
-            assignment_score = st.slider(
-                "Assignment Score (%)", 0, 100, 75,
-            )
-
-            test_score = st.slider(
-                "Test Score (%)", 0, 100, 75,
-            )
-
-            exam_score = st.slider(
-                "Exam Score (%)", 0, 100, 75,
-            )
+                student_data[feature] = st.slider(
+                    label,
+                    minimum,
+                    maximum,
+                    default,
+                    help=f"Column: `{feature}`",
+                )
 
         submitted = st.form_submit_button(
             "📋 Assess Student", type="primary",
@@ -186,16 +223,6 @@ def render_assessment_page(controller: DashboardController) -> None:
             if selected_option == "🏆 Best Model (auto)"
             else selected_option
         )
-
-        student_data = {
-            "attendance_rate": attendance_rate,
-            "study_hours": study_hours,
-            "sleep_hours": sleep_hours,
-            "social_media_hours": social_media_hours,
-            "assignment_score": assignment_score,
-            "test_score": test_score,
-            "exam_score": exam_score,
-        }
 
         with st.spinner("Assessing..."):
 
@@ -257,16 +284,57 @@ def render_assessment_page(controller: DashboardController) -> None:
 
             st.bar_chart(probabilities_df)
 
-        if getattr(prediction, "top_features", None):
+        # Instance-level explanation for this student (SHAP),
+        # with the global-importance view as a fallback.
+        instance_explanation = getattr(
+            prediction, "instance_explanation", None
+        )
+
+        if instance_explanation:
 
             st.write("**Why this prediction?**")
+
+            st.caption(
+                "SHAP contributions for this student: how much "
+                "each factor pushed the prediction towards "
+                "(positive) or away from (negative) the label."
+            )
+
+            st.dataframe(
+                pd.DataFrame(instance_explanation)[
+                    [
+                        "display_name",
+                        "value",
+                        "contribution",
+                        "direction",
+                    ]
+                ].rename(
+                    columns={
+                        "display_name": "Factor",
+                        "value": "Student's value",
+                        "contribution": "Contribution",
+                        "direction": "Effect",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        elif getattr(prediction, "top_features", None):
+
+            st.write("**Why this prediction?**")
+
+            st.caption(
+                "SHAP is not installed -- showing the model's "
+                "globally most important factors instead."
+            )
 
             for feature in prediction.top_features:
 
                 st.write(
                     f"- **{feature['display_name']}**: "
                     f"{feature['value']:.1f} "
-                    f"(influence: {feature['importance']:.1%})"
+                    f"(global influence: {feature['importance']:.1%})"
                 )
 
         st.divider()

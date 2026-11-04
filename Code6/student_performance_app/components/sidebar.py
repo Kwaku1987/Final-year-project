@@ -18,7 +18,16 @@ Description:
     - Quick Information
 
 Version:
-    5.0
+    6.0
+
+Notes
+-----
+v5.x read every status flag from ApplicationState while app.py
+held the DashboardController in st.session_state. Two sources of
+truth meant the sidebar could say "Models: trained" while the page
+said "no models". v6.0 takes the controller as its single source
+of truth (passed in by app.py) and only falls back to
+ApplicationState for notifications.
 ===============================================================
 """
 
@@ -95,7 +104,11 @@ class Sidebar:
 
     APP_TITLE = "🎓 Student Performance"
 
-    APP_VERSION = "Version 5.0"
+    APP_VERSION = "Version 6.0"
+
+    # Controller captured by render(), so the helper methods
+    # below always read the same state the pages read.
+    _controller = None
 
     # --------------------------------------------------------
 
@@ -104,9 +117,17 @@ class Sidebar:
         cls,
         current_page: DashboardPage,
         mode: str = "administrator",
+        controller=None,
     ) -> DashboardPage:
         """
         Draw the complete sidebar.
+
+        Parameters
+        ----------
+        controller:
+            The DashboardController for this session. When
+            supplied, it is the single source of truth for every
+            status flag shown here.
 
         Parameters
         ----------
@@ -123,6 +144,8 @@ class Sidebar:
         DashboardPage
             Selected page.
         """
+
+        cls._controller = controller
 
         with st.sidebar:
 
@@ -146,6 +169,106 @@ class Sidebar:
 
         return page
 
+
+    # ========================================================
+    # STATE HELPERS (controller first, ApplicationState last)
+    # ========================================================
+
+    @classmethod
+    def _has_dataset(cls) -> bool:
+
+        if cls._controller is not None:
+            return bool(cls._controller.has_dataset)
+
+        return cls._has_dataset()
+
+    @classmethod
+    def _has_trained_models(cls) -> bool:
+
+        if cls._controller is not None:
+            return bool(cls._controller.has_trained_models)
+
+        return cls._has_trained_models()
+
+    @classmethod
+    def _has_saved_model(cls) -> bool:
+
+        if cls._controller is not None:
+            return bool(cls._controller.has_saved_model)
+
+        return cls._has_saved_model()
+
+    @classmethod
+    def _assessment_history(cls) -> list:
+
+        if cls._controller is not None:
+            return list(
+                cls._controller.get_assessment_history()
+            )
+
+        return cls._assessment_history()
+
+    @classmethod
+    def _is_ready_for_prediction(cls) -> bool:
+
+        if cls._controller is not None:
+            return bool(
+                cls._controller.is_ready_for_prediction
+            )
+
+        return cls._is_ready_for_prediction()
+
+    @classmethod
+    def _is_ready_for_interpretation(cls) -> bool:
+
+        if cls._controller is not None:
+            return (
+                cls._controller.state
+                .get_interpretation_report()
+                is not None
+            )
+
+        return cls._is_ready_for_interpretation()
+
+    @classmethod
+    def _is_ready_for_reports(cls) -> bool:
+
+        if cls._controller is not None:
+            return (
+                cls._controller.get_report() is not None
+            )
+
+        return cls._is_ready_for_reports()
+
+    @classmethod
+    def _switch_mode(cls) -> None:
+        """Leave the current mode, re-locking Training Mode."""
+
+        if cls._controller is not None:
+
+            cls._controller.application_mode = None
+
+            cls._controller.state.clear_application_mode()
+
+        cls._switch_mode()
+
+        try:
+
+            from utils.auth import lock_admin
+
+            lock_admin()
+
+        except Exception:  # pragma: no cover
+            pass
+
+    @classmethod
+    def _reset(cls) -> None:
+
+        if cls._controller is not None:
+            cls._controller.reset()
+
+        cls._reset()
+
     # =======================================================
     # Mode Badge / Switch
     # =======================================================
@@ -166,7 +289,7 @@ class Sidebar:
             use_container_width=True,
         ):
 
-            ApplicationState.clear_application_mode()
+            cls._switch_mode()
 
             st.rerun()
 
@@ -241,32 +364,32 @@ class Sidebar:
 
             cls._workflow_item(
                 label="Load Saved Model",
-                completed=ApplicationState.has_saved_model()
+                completed=cls._has_saved_model()
             )
 
             cls._workflow_item(
                 label="Assess Students",
                 completed=bool(
-                    ApplicationState.get_assessment_history()
+                    cls._assessment_history()
                 )
             )
 
             return
 
-        dataset_ready = ApplicationState.has_dataset()
+        dataset_ready = cls._has_dataset()
 
-        training_ready = ApplicationState.has_trained_models()
+        training_ready = cls._has_trained_models()
 
         prediction_ready = (
-            ApplicationState.is_ready_for_prediction()
+            cls._is_ready_for_prediction()
         )
 
         interpretation_ready = (
-            ApplicationState.is_ready_for_interpretation()
+            cls._is_ready_for_interpretation()
         )
 
         report_ready = (
-            ApplicationState.is_ready_for_reports()
+            cls._is_ready_for_reports()
         )
 
         cls._workflow_item(
@@ -334,13 +457,13 @@ class Sidebar:
 
             cls._status_item(
                 label="Saved Model",
-                active=ApplicationState.has_saved_model(),
+                active=cls._has_saved_model(),
                 active_text="Loaded",
                 inactive_text="Not Loaded"
             )
 
             history_count = len(
-                ApplicationState.get_assessment_history()
+                cls._assessment_history()
             )
 
             cls._status_item(
@@ -354,21 +477,21 @@ class Sidebar:
 
         cls._status_item(
             label="Dataset",
-            active=ApplicationState.has_dataset(),
+            active=cls._has_dataset(),
             active_text="Loaded",
             inactive_text="Not Loaded"
         )
 
         cls._status_item(
             label="Models",
-            active=ApplicationState.has_trained_models(),
+            active=cls._has_trained_models(),
             active_text="Trained",
             inactive_text="Not Trained"
         )
 
         cls._status_item(
             label="Prediction",
-            active=ApplicationState.is_ready_for_prediction(),
+            active=cls._is_ready_for_prediction(),
             active_text="Ready",
             inactive_text="Unavailable"
         )
@@ -376,7 +499,7 @@ class Sidebar:
         cls._status_item(
             label="Interpretation",
             active=(
-                ApplicationState.is_ready_for_interpretation()
+                cls._is_ready_for_interpretation()
             ),
             active_text="Generated",
             inactive_text="Not Generated"
@@ -384,7 +507,7 @@ class Sidebar:
 
         cls._status_item(
             label="Report",
-            active=ApplicationState.is_ready_for_reports(),
+            active=cls._is_ready_for_reports(),
             active_text="Ready",
             inactive_text="Not Ready"
         )
@@ -452,7 +575,7 @@ class Sidebar:
             )
         ):
 
-            ApplicationState.reset_application()
+            cls._reset()
 
             st.rerun()
 

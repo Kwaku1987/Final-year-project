@@ -19,7 +19,112 @@ import pandas as pd
 import streamlit as st
 
 from dashboard.dashboard_controller import DashboardController
-from backend.config import CPI_CONFIG
+from backend.config import CPI_CONFIG, FEATURE_COLUMNS
+
+
+# ================================================================
+# INPUT SPECS
+# ================================================================
+# label, minimum, maximum, default -- per feature column.
+# ================================================================
+
+INPUT_SPECS = {
+    "attendance_rate": ("Attendance Rate (%)", 0, 100, 85),
+    "study_hours": (
+        "Daily Study Hours",
+        0.0,
+        float(CPI_CONFIG["study_hours_max"]) * 2,
+        4.0,
+    ),
+    "sleep_hours": (
+        "Daily Sleep Hours",
+        0.0,
+        float(CPI_CONFIG["sleep_hours_max"]) * 2,
+        7.0,
+    ),
+    "social_media_hours": (
+        "Daily Social Media Hours",
+        0.0,
+        float(CPI_CONFIG["social_media_hours_max"]) * 2,
+        2.0,
+    ),
+    "assignment_score": ("Assignment Score (%)", 0, 100, 75),
+    "test_score": ("Test Score (%)", 0, 100, 75),
+    "exam_score": ("Exam Score (%)", 0, 100, 75),
+}
+
+
+# ================================================================
+# EXPLANATION RENDERER
+# ================================================================
+
+def _render_explanation(prediction) -> None:
+    """
+    Show why this student got this prediction.
+
+    Prefers SHAP contributions (instance-level, signed) and
+    falls back to global feature importance paired with the
+    student's values when SHAP is unavailable.
+    """
+
+    instance_explanation = getattr(
+        prediction, "instance_explanation", None
+    )
+
+    if instance_explanation:
+
+        st.write("**Why this prediction?**")
+
+        st.caption(
+            "SHAP contributions for this student: how much each "
+            "factor pushed the prediction towards (positive) or "
+            "away from (negative) the predicted label."
+        )
+
+        explanation_df = pd.DataFrame(instance_explanation)[
+            ["display_name", "value", "contribution", "direction"]
+        ].rename(
+            columns={
+                "display_name": "Factor",
+                "value": "Student's value",
+                "contribution": "Contribution",
+                "direction": "Effect",
+            }
+        )
+
+        st.dataframe(
+            explanation_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.bar_chart(
+            explanation_df[["Factor", "Contribution"]]
+            .set_index("Factor")
+        )
+
+        return
+
+    if getattr(prediction, "top_features", None):
+
+        st.write("**Why this prediction?**")
+
+        st.caption(
+            "SHAP is not installed, so this shows the model's "
+            "globally most important factors alongside this "
+            "student's values (not an instance-level "
+            "explanation). Install `shap` for per-student "
+            "attribution."
+        )
+
+        for feature in prediction.top_features:
+
+            st.write(
+                f"- **{feature['display_name']}**: "
+                f"{feature['value']:.1f} "
+                f"(global influence: {feature['importance']:.1%})"
+            )
+
 
 
 def render_prediction_page(controller: DashboardController) -> None:
@@ -67,42 +172,49 @@ def _render_single_prediction(
 
         st.subheader("Student Details")
 
-        col1, col2 = st.columns(2)
+        # v3.0: only ask for the columns the model was actually
+        # trained on. Under the default "exam_band" definition the
+        # examination score IS the label, so it is deliberately
+        # not an input -- asking for it would make the prediction
+        # circular all over again.
+        features = controller.required_features
 
-        with col1:
+        excluded = [
+            column
+            for column in FEATURE_COLUMNS
+            if column not in features
+        ]
 
-            attendance_rate = st.slider(
-                "Attendance Rate (%)", 0, 100, 85,
+        if excluded:
+
+            st.caption(
+                "Not requested because the model predicts it: "
+                + ", ".join(excluded)
+                + "."
             )
 
-            study_hours = st.slider(
-                "Daily Study Hours", 0.0,
-                float(CPI_CONFIG["study_hours_max"]) * 2, 4.0,
+        columns = st.columns(2)
+
+        student_data = {}
+
+        for index, feature in enumerate(features):
+
+            label, minimum, maximum, default = (
+                INPUT_SPECS.get(
+                    feature,
+                    (feature.replace("_", " ").title(), 0, 100, 0),
+                )
             )
 
-            sleep_hours = st.slider(
-                "Daily Sleep Hours", 0.0,
-                float(CPI_CONFIG["sleep_hours_max"]) * 2, 7.0,
-            )
+            with columns[index % 2]:
 
-            social_media_hours = st.slider(
-                "Daily Social Media Hours", 0.0,
-                float(CPI_CONFIG["social_media_hours_max"]) * 2, 2.0,
-            )
-
-        with col2:
-
-            assignment_score = st.slider(
-                "Assignment Score (%)", 0, 100, 75,
-            )
-
-            test_score = st.slider(
-                "Test Score (%)", 0, 100, 75,
-            )
-
-            exam_score = st.slider(
-                "Exam Score (%)", 0, 100, 75,
-            )
+                student_data[feature] = st.slider(
+                    label,
+                    minimum,
+                    maximum,
+                    default,
+                    help=f"Column: `{feature}`",
+                )
 
         submitted = st.form_submit_button(
             "🔮 Predict Performance", type="primary",
@@ -117,16 +229,6 @@ def _render_single_prediction(
         if selected_option == "🏆 Best Model (auto)"
         else selected_option
     )
-
-    student_data = {
-        "attendance_rate": attendance_rate,
-        "study_hours": study_hours,
-        "sleep_hours": sleep_hours,
-        "social_media_hours": social_media_hours,
-        "assignment_score": assignment_score,
-        "test_score": test_score,
-        "exam_score": exam_score,
-    }
 
     with st.spinner("Predicting..."):
 
@@ -186,22 +288,7 @@ def _render_single_prediction(
 
         st.bar_chart(probabilities_df)
 
-    if getattr(prediction, "top_features", None):
-
-        st.write("**Why this prediction?**")
-
-        st.caption(
-            "The factors that most influenced this "
-            "prediction, and this student's values for them."
-        )
-
-        for feature in prediction.top_features:
-
-            st.write(
-                f"- **{feature['display_name']}**: "
-                f"{feature['value']:.1f} "
-                f"(influence: {feature['importance']:.1%})"
-            )
+    _render_explanation(prediction)
 
     st.divider()
 

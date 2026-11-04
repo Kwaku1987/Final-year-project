@@ -17,6 +17,7 @@ from __future__ import annotations
 import streamlit as st
 
 from dashboard.dashboard_controller import DashboardController
+from backend.config import TARGET_DESCRIPTIONS
 
 
 def render_training_page(controller: DashboardController) -> None:
@@ -33,12 +34,57 @@ def render_training_page(controller: DashboardController) -> None:
         return
 
     st.caption(
-        "This runs the full pipeline: generates the Composite "
-        "Performance Index (CPI), prepares features, trains "
-        "Logistic Regression and Random Forest, selects the "
-        "best model, and saves it for Lecturers to use in "
-        "Assessment Mode."
+        "This runs the full pipeline: builds the target labels, "
+        "prepares features, trains Logistic Regression, Random "
+        "Forest and a soft-voting ensemble, cross-validates them, "
+        "selects the best model, and saves it for Lecturers to "
+        "use in Assessment Mode."
     )
+
+    # ------------------------------------------------------
+    # Target definition
+    # ------------------------------------------------------
+
+    with st.expander("🎯 Target definition", expanded=False):
+
+        st.write(
+            f"**Active definition:** `{controller.target_definition}`"
+        )
+
+        st.caption(
+            TARGET_DESCRIPTIONS.get(
+                controller.target_definition, ""
+            )
+        )
+
+        st.write(
+            "**Predictors used:** "
+            + ", ".join(controller.required_features)
+        )
+
+        st.caption(
+            "The column the label is derived from is always "
+            "excluded from the predictors. Switch definition "
+            "with the SPAS_TARGET_DEFINITION environment "
+            "variable (`exam_band` = default, `cpi` = legacy)."
+        )
+
+    # ------------------------------------------------------
+    # Validation warnings
+    # ------------------------------------------------------
+
+    warnings = controller.validation_warnings
+
+    if warnings:
+
+        with st.expander(
+            f"⚠️ {len(warnings)} data note(s) from validation",
+            expanded=False,
+        ):
+
+            for warning in warnings:
+
+                st.write(f"- {warning}")
 
     if st.button("🚀 Run Training Pipeline", type="primary"):
 
@@ -86,28 +132,47 @@ def render_training_page(controller: DashboardController) -> None:
         # depends on ModelEvaluator's per-model evaluate() output
         # aggregated by the framework. Fall back to a simple
         # metrics table per model.
+        import pandas as pd
+
+        cross_validation = controller.cross_validation
+
         rows = []
 
         for model_name, evaluation in comparison.items():
 
             metrics = evaluation.get("metrics", {})
 
+            cv = cross_validation.get(model_name, {})
+
             rows.append({
                 "Model": model_name,
                 "Accuracy": round(metrics.get("accuracy", 0), 4),
-                "Precision": round(metrics.get("precision", 0), 4),
-                "Recall": round(metrics.get("recall", 0), 4),
-                "F1 Score": round(
-                    metrics.get("f1_score", metrics.get("f1", 0)), 4
+                "Macro F1": round(metrics.get("macro_f1", 0), 4),
+                "Balanced Acc.": round(
+                    metrics.get("balanced_accuracy", 0), 4
+                ),
+                "ROC-AUC": (
+                    round(metrics["roc_auc"], 4)
+                    if metrics.get("roc_auc") is not None
+                    else None
+                ),
+                "Baseline": round(
+                    metrics.get("baseline_majority", 0), 4
+                ),
+                "CV Mean": (
+                    round(cv.get("mean_accuracy", 0), 4)
+                    if cv else None
+                ),
+                "CV Std": (
+                    round(cv.get("std_accuracy", 0), 4)
+                    if cv else None
                 ),
             })
 
         if rows:
 
-            import pandas as pd
-
             comparison_df = pd.DataFrame(rows).sort_values(
-                "Accuracy", ascending=False
+                "Macro F1", ascending=False
             )
 
             st.dataframe(
@@ -115,6 +180,33 @@ def render_training_page(controller: DashboardController) -> None:
                 use_container_width=True,
                 hide_index=True,
             )
+
+            # ----------------------------------------------
+            # Read the table honestly
+            # ----------------------------------------------
+            st.caption(
+                "**Baseline** is the accuracy of always "
+                "predicting the most common class. Read every "
+                "accuracy next to it: on an imbalanced target a "
+                "model can beat 90% accuracy while being useless. "
+                "**Macro F1** and **balanced accuracy** treat all "
+                "three classes equally, so they fall when the "
+                "model ignores the minority class. **CV** is "
+                "5-fold cross-validation on the training fold "
+                "only -- the columns above are held-out test "
+                "metrics."
+            )
+
+            if controller.target_definition == "cpi":
+
+                st.warning(
+                    "This run uses the legacy `cpi` target, which "
+                    "is computed from the same columns used as "
+                    "predictors. These scores measure how well "
+                    "the model reproduces the labelling rule, "
+                    "not predictive accuracy. Switch to "
+                    "`exam_band` for a genuine prediction task."
+                )
 
     st.success(f"🏆 Best Model: **{controller.best_model_name}**")
 

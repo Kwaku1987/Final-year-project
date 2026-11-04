@@ -65,6 +65,29 @@ def render_interpretation_page(controller: DashboardController) -> None:
 
     st.write(report.executive_summary)
 
+    # Methodology caveats travel with the report so the numbers
+    # are never read out of context (target definition,
+    # thresholds, effect of the baseline).
+    caveats = getattr(report, "caveats", None) or []
+
+    if caveats:
+
+        with st.expander(
+            "⚠️ How to read these results",
+            expanded=True,
+        ):
+
+            for caveat in caveats:
+
+                st.write(f"- {caveat}")
+
+    st.caption(
+        "Feature importance here is GLOBAL (which factors matter "
+        "across all students). For per-student attribution, run a "
+        "prediction on the 🔮 Prediction page -- it reports SHAP "
+        "contributions for that individual."
+    )
+
     st.divider()
 
     st.subheader("📊 Feature Importance")
