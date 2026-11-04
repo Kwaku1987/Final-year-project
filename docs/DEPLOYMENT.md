@@ -389,26 +389,32 @@ version — older code should refuse a newer bundle rather than misread it.
 
 ## 9. Before you serve real students
 
-Technical readiness is not the same as fitness to deploy. Four items remain, and
+Technical readiness is not the same as fitness to deploy. Five items remain, and
 they are **not** in this repository because they are decisions, not code:
 
 1. **Retrain on a real, de-identified cohort.** The shipped bundle is synthetic.
-   Every metric in `reports/results.md` describes generated data.
-   The "Average" band is the weakest class (macro-F1 ≈ 0.50 on the synthetic
-   cohort) — that is exactly the band a student would contest.
-2. **Institutional sign-off.** The output is advisory. State in writing, to
+   Every metric in `reports/results.md` describes generated data. The "Average"
+   band is the weakest class (recall 0.48–0.63, and it is the weakest band in
+   every subgroup) — that is exactly the band a student would contest.
+2. **Run the two validation analyses on the real cohort.** Temporal
+   (`--split temporal`) and fairness (`--fairness`) are implemented — see
+   `Code6/student_performance_app/docs/TEMPORAL_AND_FAIRNESS.md` — but their
+   answers on synthetic data say nothing about real students. Both need a
+   `semester` column and at least one of `gender`/`programme`/
+   `entry_qualification` in the export.
+3. **Institutional sign-off.** The output is advisory. State in writing, to
    whoever owns the process, that the band is a prompt for a human decision and
    not a grade.
-3. **Authentication beyond a shared password.** Training Mode uses one shared
+4. **Authentication beyond a shared password.** Training Mode uses one shared
    password, and there is no per-user identity or role separation. For anything
    beyond a single trusted operator, put the app behind institutional SSO at the
    proxy layer (e.g. OAuth2-proxy or your campus IdP) so `audit_events.actor`
    reflects a real person.
-4. **Act 843 operational duties.** Register the processing, publish a privacy
+5. **Act 843 operational duties.** Register the processing, publish a privacy
    notice, keep the retention schedule, and have a named person who can action a
    deletion request. `docs/DATA_PROTECTION.md` is the starting draft.
 
-If those four are not done, deploy on an internal, loopback-bound host for a
+If those five are not done, deploy on an internal, loopback-bound host for a
 pilot with a small number of staff — not to students.
 
 ---

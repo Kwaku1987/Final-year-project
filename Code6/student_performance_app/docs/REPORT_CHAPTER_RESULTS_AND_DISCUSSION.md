@@ -7,6 +7,18 @@
 > complete and internally consistent before your real data is available.
 > Regenerate, then replace the file and say in the caption which cohort each
 > table refers to. **Never present synthetic figures as real findings.**
+>
+> **Status (v3.3).** The tables in §5.2–5.10 were generated from the v3.1
+> cohort. The generator now also writes `semester`, `gender`, `programme` and
+> `entry_qualification` context columns and injects two documented effects (a
+> semester offset on the exam score, a programme attendance offset), so
+> re-running the command above produces slightly different numbers — and adds
+> two sections this chapter does not yet contain: **temporal validation** and
+> **fairness disaggregation**. Run
+> `python scripts/report_results.py --data data/cohort.csv --temporal`
+> once, paste the whole generated file in, and the chapter is internally
+> consistent again. The methodology, the reading of both analyses and the
+> current run's figures are in `docs/TEMPORAL_AND_FAIRNESS.md`.
 
 ---
 

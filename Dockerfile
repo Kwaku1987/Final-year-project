@@ -2,13 +2,13 @@
 # Student Performance Assessment System -- production image
 # ============================================================
 # Build:
-#     docker build -t spas:3.2 .
+#     docker build -t spas:3.3 .
 # Run:
 #     docker run -p 8501:8501 \
 #         -e SPAS_ADMIN_PASSWORD_HASH=... \
 #         -v spas-data:/data \
 #         -v "$PWD/Code6/student_performance_app/models:/app/models" \
-#         spas:3.2
+#         spas:3.3
 #
 # Notes
 # -----

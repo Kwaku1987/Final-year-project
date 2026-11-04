@@ -15,7 +15,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: spas:3.2
+    image: spas:3.3
     container_name: spas-app
     restart: unless-stopped
     env_file:

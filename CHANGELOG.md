@@ -6,6 +6,78 @@ All notable changes to this project. Format loosely follows
 
 ---
 
+## [3.3] — 2026-11-04 — "Temporal validation and fairness disaggregation"
+
+The two items that 3.1 and 3.2 listed as limitations are now implemented,
+tested and reported. Neither changes the model; both change what you are
+allowed to claim about it.
+
+### Added
+
+* **Temporal validation** (`backend/preprocessing/split_strategy.py`):
+  `temporal_split()` holds out whole academic periods — train 2024/25, test
+  2025/26 — instead of a random 80/20. Period column auto-detected
+  (`semester`, `session`, `term`, `academic_year`, `academic_period`, `cohort`,
+  `period`) or named explicitly. Refusals are explicit: missing column, unknown
+  period, fewer than 50 training rows, fewer than 20 test rows, or a single class
+  on either side all raise a message that says what to do. `compare_splits()`
+  lines up the same model under both designs and reports the change, worst first.
+  A silent fallback to a random split was deliberately not implemented: it would
+  produce a temporal claim that never happened.
+* **Fairness disaggregation** (`backend/evaluation/fairness.py`): hold-out
+  accuracy, macro F1 and per-class recall by `gender` / `programme` /
+  `entry_qualification` (and aliases), plus predicted-distribution and
+  disparity summaries. Subgroups below `min_support` (30) are flagged
+  *unreliable* and excluded from the gap; a single reliable subgroup yields "no
+  disparity conclusion is possible" rather than a tidy 0.000; a class the model
+  never predicts for a group is named. Nothing is re-weighted or "corrected" —
+  detecting a disparity is this module's job, deciding what to do about it is the
+  institution's.
+* **Pipeline and facade wiring**: `prepare()` / `prepare_data()` /
+  `run_pipeline()` accept `split_strategy`, `period_column`, `test_periods`;
+  the prepared dict now carries `split_metadata`, `train_index` and `test_index`
+  so group columns stay aligned with the hold-out rows.
+  `framework.evaluate_subgroups()`, `framework.temporal_comparison()` and
+  `framework.split_summary` expose both analyses; the split is recorded in the
+  caveats that travel with every metric.
+* **Synthetic generator context columns** (`semester`, `gender`, `programme`,
+  `entry_qualification`) — **never predictors**, added so both analyses are
+  demonstrable on the reference cohort. Two effects are injected on purpose
+  (a semester offset on the exam score, a programme attendance offset) and
+  documented as properties of the generator, not claims about students.
+  `--no-context` reproduces the old column set.
+* **CLI**: `train_model.py --split temporal --period-column --test-period
+  --fairness`, and `report_results.py --temporal --no-fairness --min-support`.
+  Fairness tables are on by default: a results chapter should not be able to
+  omit them by forgetting a flag.
+* **`docs/TEMPORAL_AND_FAIRNESS.md`**: method, refusals, the current synthetic
+  results, and an explicit reading of what those results do **not** prove.
+
+### Results on the synthetic cohort (2,000 rows, seed 42)
+
+* **Temporal validation does not degrade performance here** — change between
+  −0.03 and +0.01 macro F1 depending on the model. That is a property of the
+  generator: its semester effect is an additive shift, which preserves the signal
+  structure. Stated that way in the docs rather than reported as time-robustness.
+* **Fairness gaps are small by construction** (gender 0.065, programme 0.053,
+  entry qualification 0.046 macro F1), which makes the synthetic cohort a useful
+  "no bias to find" baseline for real data.
+* **One finding is not small:** recall for the **Average** band is 0.48–0.63 in
+  every subgroup — borderline students are where the model is weakest, and they
+  are precisely the students an early-warning flag acts on. Same finding as the
+  per-class table, now shown to hold across groups.
+
+### Changed
+
+* 24 new tests (`tests/test_temporal_and_fairness.py`); **86 tests total**.
+  `test_no_period_appears_on_both_sides_of_a_temporal_split` checks row indices,
+  not labels, so a mask bug cannot pass it; `test_disparity_is_measured_not_averaged_away`
+  requires a 100%-vs-0% split to surface as a 1.0 gap rather than a 67% average.
+* `MODEL_CARD`/`METHODOLOGY` limitations 2 and 6 rewritten from "not done" to
+  "implemented, here is what the synthetic result does and does not show".
+
+---
+
 ## [3.2] — 2026-11-04 — "Deployment readiness"
 
 Closes the gap between "runs on my laptop" and "runs on a server": state that

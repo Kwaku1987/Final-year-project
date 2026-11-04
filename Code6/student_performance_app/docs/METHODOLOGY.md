@@ -176,10 +176,13 @@ families. The UI says so.
    "top third of this cohort", not "above 80 %". Absolute thresholds are
    configurable (`LABEL_POLICY.method = "fixed"`) but were empirically
    unbalanced.
-2. **No temporal validation.** All results come from a random split of one
-   cohort. A genuine early-warning system should be validated
-   **across semesters** (train on 2024/25, test on 2025/26) — that is the only
-   split that proves the model generalises forward in time.
+2. **Temporal validation is implemented, but the synthetic result is benign.**
+   `backend/preprocessing/split_strategy.py` holds out whole academic periods
+   (train 2024/25, test 2025/26) and `train_model.py --split temporal` runs it.
+   On the synthetic cohort the change is roughly zero, which says more about the
+   generator than about the model: its semester effect is a plain additive shift,
+   and an additive shift preserves the signal structure. On real data this split
+   is the one that matters — see `docs/TEMPORAL_AND_FAIRNESS.md` §2.
 3. **Self-reported inputs.** `study_hours`, `sleep_hours` and
    `social_media_hours` are typically self-report and are the weakest features
    in the model.
@@ -188,9 +191,14 @@ families. The UI says so.
    more hour raises a grade".
 5. **SAMPLED FROM A SINGLE INSTITUTION (if applicable).** Cohort-specific
    thresholds and small class counts limit external validity.
-6. **No fairness analysis.** Results are not disaggregated by gender, programme
-   or entry qualification. Any deployment decision affecting students should be,
-   and the model should not be used as the sole basis for one.
+6. **Fairness disaggregation is implemented, and it already shows a pattern.**
+   `backend/evaluation/fairness.py` reports accuracy, macro F1 and per-class
+   recall by gender, programme and entry qualification, marks subgroups below 30
+   students as unreliable, and refuses to let an unreliable subgroup set the gap.
+   On the synthetic cohort the recall for the **Average** band is the weakest of
+   the three classes in every subgroup (0.48–0.63). Subgroup parity on synthetic
+   data is not evidence of parity on real data — see
+   `docs/TEMPORAL_AND_FAIRNESS.md` §3.
 7. **Calibration is not a performance gain.** Platt scaling can only rescale
    confidence; it cannot add information, and on the reference cohort it slightly
    increased Brier score and ECE. Whether to keep it is an empirical decision to
@@ -206,6 +214,10 @@ families. The UI says so.
 
 ```bash
 pip install -r requirements.txt
+
+# the generator also writes semester / gender / programme /
+# entry_qualification as CONTEXT columns (never predictors), so the
+# temporal and fairness analyses below have something to work with
 
 # generate a clearly-labelled synthetic cohort (no real student data)
 python scripts/make_synthetic_dataset.py --rows 2000 --out data/synthetic_cohort.csv

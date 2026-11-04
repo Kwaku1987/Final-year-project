@@ -6,7 +6,7 @@
 
 APP_DIR := Code6/student_performance_app
 PY ?= python3
-IMAGE ?= spas:3.2
+IMAGE ?= spas:3.3
 
 .DEFAULT_GOAL := help
 .PHONY: help install run test lint preflight smoke train report docker-build docker-up docker-down docker-logs docker-smoke clean
