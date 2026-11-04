@@ -6,6 +6,81 @@ All notable changes to this project. Format loosely follows
 
 ---
 
+## [3.2] — 2026-11-04 — "Deployment readiness"
+
+Closes the gap between "runs on my laptop" and "runs on a server": state that
+survives a restart, a container image, a task runner, CI, and a runbook. No
+modelling changes — the metrics and the bundle are untouched.
+
+### Added
+
+* **Persistence** (`backend/persistence/store.py`): SQLite with an
+  `assessments` table and an `audit_events` table. `get_store()` returns a
+  process-wide singleton; `SPAS_DB_PATH` (default `data/spas.db`) and
+  `SPAS_DB_ENABLED` control it. Every method is failure-tolerant: an unwritable
+  path degrades to session-only history with a warning instead of an exception,
+  so a misconfigured volume cannot take the app down.
+* **Audit trail**: `admin_unlocked`, `admin_unlock_failed`, `dataset_loaded`,
+  `model_saved`, `model_loaded`, `model_deleted`, `assessment_created`,
+  `report_exported` are recorded with actor, model name and model version. This
+  is the Appointing Authority / Act 843 evidence trail, not just logging.
+* **Assessment history is durable**: `get_assessment_history()` reads the store
+  first and falls back to session records; the Assessment page says which one
+  you are looking at.
+* **Container image** (`Dockerfile`): `python:3.12-slim`, non-root uid 10001,
+  `libgomp1` for the sklearn/XGBoost wheels, `/data` volume for the database,
+  stdlib healthcheck on `/_stcore/health`, and dependency layer cached ahead of
+  source so code changes do not re-resolve scikit-learn.
+* **`docker-compose.yml`**: loopback-bound port, `spas-data` volume, model
+  bundle mounted read-only (a bad save cannot overwrite the released model),
+  2 GB memory limit, healthcheck.
+* **`.env.example`** and `Makefile` targets: `install`, `run`, `test`, `lint`,
+  `preflight`, `smoke`, `train`, `report`, `docker-build`, `docker-up`,
+  `docker-down`, `docker-logs`, `docker-smoke`, `clean`.
+* **`scripts/preflight.py`**: host readiness — Python version, importable
+  packages, installed versions against the pins, bundle presence and contract,
+  writable storage, SQLite integrity, password hash, CORS/XSRF posture, target
+  definition. `--production` turns insecure defaults into failures.
+* **`scripts/smoke_test.py`**: deployment readiness against a *running* server —
+  health endpoint, HTML shell, static bundle, headers. `--json` for CI.
+* **CI** (`.github/workflows/ci.yml`): tests on Python 3.11 and 3.12, a
+  byte-compile pass, strict preflight, then a Docker build, health wait and
+  container smoke test.
+* **`docs/DEPLOYMENT.md`**: the runbook — local, Docker, compose, Nginx/Caddy
+  TLS with the WebSocket headers Streamlit requires, volume layout, audit-trail
+  queries, backup and restore, upgrade, retraining, rollback, Act 843 duties,
+  and a troubleshooting table.
+* **`tests/test_persistence.py`**: 9 tests — round-trip across store instances
+  (restart simulation), ordering and limits, unwritable-path degradation,
+  audit vocabulary. 62 tests total.
+
+### Changed
+
+* **`.streamlit/config.toml` is production-safe**: `enableCORS` and
+  `enableXsrfProtection` are **on**, `showErrorDetails = false`,
+  `maxUploadSize = 25`, `toolbarMode = "minimal"`, static serving off. Embedded
+  previews override CORS/XSRF with CLI flags instead of weakening the committed
+  file.
+* **`.gitignore`**: the SQLite database is runtime state and is never committed;
+  a root `.gitignore` keeps `.env` and local backups out of git.
+* **README**: deployment section, runbook link, 62-test badge, persistence and
+  audit documented, and the "known limitations" list corrected — temporal
+  validation and fairness disaggregation do **not** exist and are now stated as
+  open items rather than implied gaps.
+
+### Not fixed (deliberately)
+
+* **No temporal validation** (train one semester, test the next) and **no
+  fairness disaggregation** by gender, programme or entry qualification. Both
+  are cheap to add and both change which numbers you are allowed to report, so
+  they are left as explicit open items rather than quietly mocked up.
+* **Single shared Training Mode password.** Per-user identity and role
+  separation belong at the proxy (institutional SSO), not in a Streamlit app.
+* **The committed bundle is still the legacy `cpi`-target model.** Retrain
+  before quoting its metrics.
+
+---
+
 ## [3.1] — 2026-11-04 — "Search, calibration, and a results chapter"
 
 Closes out the remaining items from the code review: the two model-quality
