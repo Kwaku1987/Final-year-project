@@ -1,2 +1,178 @@
-# Final-year-project
-Final year project on student performance predictor system
+# Student Performance Assessment System
+
+A machine-learning decision-*support* system that predicts a student's
+**end-of-term examination band** (Low / Average / High) from term-time behaviour
+and continuous assessment — attendance, study hours, sleep, social-media use,
+assignment and class-test scores — and explains every prediction.
+
+Built as a final-year project: Streamlit front end, scikit-learn back end,
+role-based modes for an administrator (train) and a lecturer (assess), model
+persistence, per-student SHAP explanations, risk/intervention advice, and
+PDF/Excel reporting.
+
+![status](https://img.shields.io/badge/tests-44%20passing-brightgreen)
+![python](https://img.shields.io/badge/python-3.11%2B-blue)
+![licence](https://img.shields.io/badge/licence-unset-lightgrey)
+
+---
+
+## Why this version exists (read this before quoting any number)
+
+An earlier version of this project computed a **Composite Performance Index**
+from seven columns and then trained models to predict that index **from the same
+seven columns**. The label was a deterministic function of the inputs, so the
+reported 97.8 % "accuracy" measured how well the model reproduced its own
+formula — not how well it predicts anything. The same pipeline scored ~98 % on
+pure random noise.
+
+This version separates **what the label is** from **what the model may see**:
+
+* the examination score becomes the **label**, and is **excluded from the
+  predictors**;
+* labels are **balanced** by quantile thresholds (the old fixed cut-offs produced
+  a ~1 % "High" class);
+* every metric is reported with a **majority-class baseline**, **macro F1** and
+  **balanced accuracy**;
+* the old framing is still available (`SPAS_TARGET_DEFINITION=cpi`) but is
+  labelled *rule reconstruction* everywhere it appears.
+
+The result is a believable **~63 % accuracy against a 33 % baseline** on
+separated synthetic data, and **chance-level accuracy on noise** — which is what
+an honest evaluation should show. Full reasoning, limitations and the
+reproduction steps: **[`docs/METHODOLOGY.md`](Code6/student_performance_app/docs/METHODOLOGY.md)**.
+
+---
+
+## Quick start
+
+```bash
+git clone https://github.com/Kwaku1987/Final-year-project.git
+cd Final-year-project/Code6/student_performance_app
+
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt        # exact pins -- required, see note below
+
+streamlit run app.py
+```
+
+Then:
+
+* **Lecturer / Assessment Mode** → *Load Saved Model* → assess students
+  immediately with the bundled model (no dataset needed).
+* **Administrator / Training Mode** → password (`change-me-admin` by default; set
+  `SPAS_ADMIN_PASSWORD_HASH`, see [`docs/DATA_PROTECTION.md`](Code6/student_performance_app/docs/DATA_PROTECTION.md))
+  → upload a dataset → train → save.
+
+> ⚠️ **The version pins matter.** `models/best_model.pkl` was written by
+> scikit-learn 1.9.x; with an older scikit-learn it fails to load with
+> `AttributeError: 'LogisticRegression' object has no attribute 'multi_class'`.
+> `requirements.txt` pins working versions.
+
+No dataset handy? Generate a clearly-labelled synthetic one:
+
+```bash
+python scripts/make_synthetic_dataset.py --rows 2000 --out data/synthetic_cohort.csv
+python scripts/train_model.py --data data/synthetic_cohort.csv \
+       --out models/best_model.pkl --metrics reports/metrics.json
+```
+
+---
+
+## Features
+
+| Area | What it does |
+|---|---|
+| **Dataset** | CSV/XLSX upload, schema + range validation, column-alias mapping, automatic score-scale repair, missing/duplicate reporting, EDA (correlation, multicollinearity, outliers, target distribution) |
+| **Training** | Target building, stratified 80/20 split, scaling, Logistic Regression + Random Forest + soft-voting ensemble, 5-fold CV, model comparison with honest metrics, saved bundle |
+| **Prediction** | Single-student prediction with class probabilities, SHAP per-student explanation, intervention priority with stated reasons, PDF report |
+| **Batch** | Whole-roster CSV/XLSX prediction with risk columns, CSV export |
+| **Explainable AI** | Global feature importance (coefficients / Gini), plain-English insights, recommendations, methodology caveats |
+| **Assessment Mode** | Lecturer workflow: load the saved model, assess by name/ID, history, PDF |
+| **Reports** | PDF student report, Excel batch report |
+| **Governance** | Password-gated Training Mode, single-source config, model card, version guard on load |
+
+### Two questions, two explanations
+
+| Question | Method | Where |
+|---|---|---|
+| Which factors matter overall? | Normalised coefficients / Gini importance | 🧠 Explainable AI |
+| Why did *this* student get *this* label? | **SHAP** contributions, measured against a stored sample of training rows | 🔮 Prediction, 📋 Assess Student |
+
+---
+
+## Project layout
+
+```
+Code6/student_performance_app/
+├── app.py                        Streamlit entry point + router
+├── requirements.txt              exact pins
+├── models/best_model.pkl         legacy bundle (see docs/MODEL_CARD.md)
+├── framework/
+│   ├── student_performance_framework.py   Facade: the public API
+│   └── framework_factory.py               Factory: wires everything
+├── dashboard/
+│   ├── dashboard_controller.py            UI ↔ backend orchestration
+│   ├── application_state.py               session state, notifications
+│   └── pages/                            9 pages (home, dataset, training, …)
+├── backend/
+│   ├── config.py                 single source of truth for schema/weights/policy
+│   ├── validation/               dataset validator + scale repair
+│   ├── cpi/                      CPI + target builder (exam_band | cpi)
+│   ├── preprocessing/            split, scale, encode
+│   ├── training/                 LR, RF, ensemble, CV
+│   ├── evaluation/               honest metrics + baselines
+│   ├── interpretation/           global importance + SHAP
+│   ├── intervention/             risk score → priority → reasons
+│   ├── reporting/                PDF / Excel exporters
+│   └── eda/                      exploratory analysis (wired into the UI)
+├── components/sidebar.py
+├── utils/                        auth (password gate), theme
+├── scripts/                      synthetic data generator, CLI trainer
+├── tests/                        40 pytest tests
+└── docs/                         METHODOLOGY · MODEL_CARD · DATA_PROTECTION
+```
+
+Architecture: **Facade** (`StudentPerformanceFramework`) over eight backend
+services, built by a **Factory**, driven by a **controller** and a session state
+object, with **one shared config** so no component invents its own schema.
+
+---
+
+## Tests
+
+```bash
+python -m pytest tests -q          # 44 passed
+```
+
+The suite encodes the fixes: the label source is never a predictor, labels are
+balanced, the 0–20 assignment scale is repaired, metrics carry a baseline,
+interventions always state a reason, bundles round-trip their contract, and a
+version-mismatched bundle fails with a readable message instead of a traceback.
+
+---
+
+## Documentation
+
+* [`docs/METHODOLOGY.md`](Code6/student_performance_app/docs/METHODOLOGY.md) — target design, evaluation protocol, limitations
+* [`docs/MODEL_CARD.md`](Code6/student_performance_app/docs/MODEL_CARD.md) — what the shipped model is, and what it must not be used for
+* [`docs/DATA_PROTECTION.md`](Code6/student_performance_app/docs/DATA_PROTECTION.md) — access control and Act 843 obligations
+* [`CHANGELOG.md`](CHANGELOG.md) — what changed in this revision and why
+
+---
+
+## Known limitations
+
+Relative (cohort-specific) thresholds · no temporal validation across semesters ·
+self-reported behavioural inputs · no causal claims · no fairness
+disaggregation · the committed model is the legacy circular-target model and
+should be retrained before any number from it is quoted.
+
+---
+
+## Licence
+
+Not yet set. Until a licence is chosen, the default is **all rights reserved** —
+add one (MIT or Apache-2.0 are the usual choices for coursework released
+publicly) before others can reuse this code.
+
+**Author:** Brenya Kwaku Twum · GitHub [@Kwaku1987](https://github.com/Kwaku1987)
