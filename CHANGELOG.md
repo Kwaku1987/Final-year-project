@@ -53,6 +53,15 @@ allowed to claim about it.
 * **`docs/TEMPORAL_AND_FAIRNESS.md`**: method, refusals, the current synthetic
   results, and an explicit reading of what those results do **not** prove.
 
+### Fixed
+
+* **The Python floor is 3.12, not 3.11.** `xgboost==3.4.1` and
+  `shap==0.54.1` both declare `requires-python >= 3.12`, so the 3.11 CI job
+  failed at *Install dependencies* before running a single test. Caught by the
+  first CI run, which is what it is for. CI now runs 3.12 and 3.13,
+  `preflight.py` refuses 3.11 with a message that names the reason, and the
+  README badge and deployment prerequisites say 3.12.
+
 ### Results on the synthetic cohort (2,000 rows, seed 42)
 
 * **Temporal validation does not degrade performance here** — change between

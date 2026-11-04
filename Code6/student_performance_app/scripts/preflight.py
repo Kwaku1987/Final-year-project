@@ -66,14 +66,18 @@ def check_python() -> None:
 
     version = sys.version_info
 
-    if version >= (3, 11):
+    # 3.12 is a hard floor, not a preference: xgboost 3.4.1 and shap
+    # 0.54.1 are pinned in requirements.txt and both declare
+    # requires-python >= 3.12. On 3.11, pip fails before the app starts.
+    if version >= (3, 12):
         record(OK, "environment", f"Python {version.major}.{version.minor}")
     else:
         record(
             FAIL,
             "environment",
-            f"Python {version.major}.{version.minor} is too old "
-            "(needs 3.11+)",
+            f"Python {version.major}.{version.minor} is too old: the "
+            "pinned xgboost and shap releases need 3.12+, so "
+            "requirements.txt will not install",
         )
 
 

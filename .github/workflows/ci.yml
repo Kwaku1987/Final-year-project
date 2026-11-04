@@ -25,7 +25,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12"]
+        # 3.12 is the floor: xgboost 3.4.1 and shap 0.54.1 both
+        # declare requires-python >= 3.12, so a 3.11 job fails at
+        # "Install dependencies" before a single test runs.
+        python: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4

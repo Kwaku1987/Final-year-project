@@ -11,7 +11,7 @@ persistence, per-student SHAP explanations, risk/intervention advice, and
 PDF/Excel reporting.
 
 ![status](https://img.shields.io/badge/tests-86%20passing-brightgreen)
-![python](https://img.shields.io/badge/python-3.11%2B-blue)
+![python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 
 ---

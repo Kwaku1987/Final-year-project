@@ -26,6 +26,9 @@ pandas==2.2.3
 numpy==2.3.5
 
 # --- machine learning -------------------------------------------
+# NOTE: xgboost 3.4.1 and shap 0.54.1 below require Python >= 3.12,
+# so this file does not install on 3.11. The Docker image and CI both
+# use 3.12.
 scikit-learn==1.9.1
 xgboost==3.4.1
 joblib==1.5.3

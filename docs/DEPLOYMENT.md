@@ -61,7 +61,7 @@ The app has two modes with different threat models:
 
 | Requirement | Minimum | Notes |
 |---|---|---|
-| Python | 3.11 | 3.12 is what the image ships |
+| Python | **3.12** | A hard floor, not a preference: `xgboost==3.4.1` and `shap==0.54.1` both declare `requires-python >= 3.12`. On 3.11 `pip install -r requirements.txt` fails outright, so the 3.12 image is the supported runtime. |
 | RAM | 2 GB | scikit-learn + pandas + shap |
 | Disk | 1 GB | 16 MB model, DB grows slowly |
 | Docker | 24.x + Compose v2 | only for the container path |
@@ -76,10 +76,13 @@ compares installed versions against the pins and warns before that happens.
 
 ## 3. Local run (no Docker)
 
+Python **3.12 or newer** is required (see the table above — `xgboost` and
+`shap` will not install on 3.11).
+
 ```bash
 cd Code6/student_performance_app
 
-python -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # optional but recommended: set a real Training Mode password
