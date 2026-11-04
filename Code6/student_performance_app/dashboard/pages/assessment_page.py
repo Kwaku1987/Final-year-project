@@ -421,26 +421,59 @@ def render_assessment_page(controller: DashboardController) -> None:
 
     if not history:
 
-        st.caption("No assessments logged yet this session.")
+        st.caption("No assessments logged yet.")
 
     else:
 
-        history_df = pd.DataFrame([
-            {
-                "Student Name": record.student_name,
-                "Student ID": record.student_id or "—",
-                "Prediction": record.prediction,
-                "Confidence": f"{record.confidence * 100:.1f}%",
-                "Priority": record.risk_priority or "—",
-                "Date": record.assessment_date.strftime(
-                    "%Y-%m-%d %H:%M"
-                ),
-            }
-            for record in reversed(history)
-        ])
+        # Records come back as dicts when they were read from the
+        # persistent store, and as AssessmentRecord objects when
+        # persistence is unavailable. Normalise both.
+        rows = []
+
+        for record in reversed(history):
+
+            if isinstance(record, dict):
+
+                rows.append(
+                    {
+                        "Student Name": record.get("student_name"),
+                        "Student ID": record.get("student_id") or "—",
+                        "Prediction": record.get("predicted"),
+                        "Confidence": (
+                            f"{(record.get('confidence') or 0) * 100:.1f}%"
+                        ),
+                        "Priority": record.get("risk_priority") or "—",
+                        "Date": (record.get("created_at") or "")[:16]
+                        .replace("T", " "),
+                    }
+                )
+
+            else:
+
+                rows.append(
+                    {
+                        "Student Name": record.student_name,
+                        "Student ID": record.student_id or "—",
+                        "Prediction": record.prediction,
+                        "Confidence": (
+                            f"{record.confidence * 100:.1f}%"
+                        ),
+                        "Priority": record.risk_priority or "—",
+                        "Date": record.assessment_date.strftime(
+                            "%Y-%m-%d %H:%M"
+                        ),
+                    }
+                )
 
         st.dataframe(
-            history_df,
+            pd.DataFrame(rows),
             use_container_width=True,
             hide_index=True,
+        )
+        st.caption(
+            "Persisted assessments survive restarts and are shared "
+            "between lecturers."
+            if controller.history_is_persistent
+            else "Persistence is unavailable -- this history is "
+            "held in the current session only."
         )

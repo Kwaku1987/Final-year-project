@@ -66,3 +66,14 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# ============================================================
+# Runtime state (v3.2)
+# ============================================================
+# SQLite database holding assessments and the audit trail.
+# It is deployment state, not source: never commit it.
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+*.db

@@ -74,6 +74,11 @@ from backend.intervention.intervention_engine import (
     InterventionEngine,
 )
 
+from backend.persistence.store import (
+    audit,
+    get_store,
+)
+
 from backend.reporting.report_engine import ReportEngine
 from backend.reporting.pdf_exporter import PDFExporter
 from backend.reporting.excel_exporter import ExcelExporter
@@ -201,6 +206,21 @@ class DashboardController:
     # ========================================================
     # METHODOLOGY / DIAGNOSTIC ACCESSORS (v3.0)
     # ========================================================
+
+    @property
+    def history_is_persistent(self) -> bool:
+        """Whether assessments survive a restart."""
+
+        return get_store().healthy
+
+    # --------------------------------------------------------
+
+    def audit_events(self, limit: int = 200) -> list:
+        """Recent audit events (empty when persistence is off)."""
+
+        return get_store().list_events(limit=limit)
+
+    # --------------------------------------------------------
 
     @property
     def target_definition(self) -> str:
@@ -374,6 +394,14 @@ class DashboardController:
 
             self.state.success(
                 "Dataset uploaded and validated successfully."
+            )
+
+            audit(
+                "dataset_loaded",
+                detail=(
+                    f"{len(validated)} rows, "
+                    f"{len(validated.columns)} columns"
+                ),
             )
 
             logger.info(
@@ -585,6 +613,16 @@ class DashboardController:
                 path
             )
 
+            audit(
+                "model_saved",
+                detail=(
+                    f"best={self.framework.best_model_name}, "
+                    f"samples={self.framework.model_training_samples}"
+                ),
+                model_name=self.framework.best_model_name,
+                model_version=self.framework.model_version,
+            )
+
             self.state.set_saved_model_available(True)
 
             self.state.success(
@@ -605,6 +643,16 @@ class DashboardController:
 
     # =======================================================
     # LECTURER / ASSESSMENT MODE : LOAD SAVED MODEL
+    # =======================================================
+
+    def log_admin_unlock(self, success: bool) -> None:
+        """Record an attempt to enter Training Mode."""
+
+        audit(
+            "admin_unlocked" if success else "admin_unlock_failed",
+            actor="administrator",
+        )
+
     # =======================================================
 
     def enter_assessment_mode(
@@ -638,6 +686,15 @@ class DashboardController:
 
             self.state.success(
                 f"Loaded saved model: {model_name}"
+            )
+
+            audit(
+                "model_loaded",
+                detail=f"path={path}, best={model_name}",
+                model_name=model_name,
+                model_version=getattr(
+                    self.framework, "model_version", None
+                ),
             )
 
             return model_name
@@ -712,13 +769,62 @@ class DashboardController:
 
         self.state.add_assessment_record(record)
 
+        # Durable copy: the session list is lost when the tab
+        # closes, the database is not.
+        store = get_store()
+
+        persisted = store.add_assessment(
+            student_name=record.student_name,
+            student_id=record.student_id,
+            predicted=record.prediction,
+            confidence=record.confidence,
+            model_name=getattr(prediction, "model_name", None),
+            risk_priority=record.risk_priority,
+            risk_score=record.risk_score,
+            student_data=student_data,
+            explanation=getattr(
+                prediction, "instance_explanation", None
+            ),
+        )
+
+        audit(
+            "assessment_created",
+            detail=(
+                f"{record.student_name}"
+                + (f" ({record.student_id})" if record.student_id else "")
+                + f" -> {record.prediction}"
+                + ("" if persisted else " [not persisted]")
+            ),
+            model_name=getattr(prediction, "model_name", None),
+        )
+
         return prediction, record
 
     # =======================================================
     # ASSESSMENT HISTORY (Lecturer / Assessment Mode)
     # =======================================================
 
-    def get_assessment_history(self) -> list:
+    def get_assessment_history(
+        self,
+        limit: int = 100,
+    ) -> list:
+        """
+        Return assessment records, newest first.
+
+        Prefers the persisted store (survives restarts and is
+        shared between users); falls back to the in-session list
+        when persistence is unavailable, so a read-only
+        deployment still works.
+        """
+
+        store = get_store()
+
+        if store.healthy:
+
+            return [
+                record.to_dict()
+                for record in store.list_assessments(limit=limit)
+            ]
 
         return self.state.get_assessment_history()
 
@@ -749,6 +855,11 @@ class DashboardController:
             student_id=student_id,
         )
 
+        audit(
+            "report_exported",
+            detail=f"student_pdf name={report.get('student_name')}",
+        )
+
         return self.pdf_exporter.export_student_report(report)
 
     # -------------------------------------------------------
@@ -769,6 +880,11 @@ class DashboardController:
 
         summary = self.report_engine.generate_batch_report(
             results
+        )
+
+        audit(
+            "report_exported",
+            detail=f"batch_excel rows={len(results)}",
         )
 
         return self.excel_exporter.export(results, summary)
@@ -825,6 +941,14 @@ class DashboardController:
         deleted = self.framework.delete_saved_model(path)
 
         self.state.set_saved_model_available(False)
+
+        if deleted:
+
+            audit(
+                "model_deleted",
+                detail=f"path={path}",
+                model_version=self.framework.model_version,
+            )
 
         if deleted:
 

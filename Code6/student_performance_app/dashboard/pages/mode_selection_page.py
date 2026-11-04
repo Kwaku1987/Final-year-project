@@ -87,7 +87,11 @@ def render_mode_selection_page(
             use_container_width=True,
         ):
 
-            if verify_admin_password(password):
+            succeeded = verify_admin_password(password)
+
+            controller.log_admin_unlock(succeeded)
+
+            if succeeded:
 
                 controller.set_mode("administrator")
 
