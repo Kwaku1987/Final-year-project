@@ -64,6 +64,9 @@ SESSION_KEY = "admin_authenticated"
 
 ATTEMPTS_KEY = "admin_auth_attempts"
 
+# Why the last attempt failed, beyond "it did" -- see verification_hint().
+HINT_KEY = "admin_auth_hint"
+
 
 # ============================================================
 # HASHING
@@ -78,6 +81,42 @@ def hash_password(password: str) -> str:
 
 
 _HEX_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
+# A 64-character hex run that is not part of a longer hex string. Used to
+# recover a digest that arrived wrapped in something -- backticks from a
+# chat message, curly quotes from a phone keyboard, a trailing comma.
+_DIGEST_ANYWHERE = re.compile(
+    r"(?<![0-9a-fA-F])([0-9a-fA-F]{64})(?![0-9a-fA-F])"
+)
+
+# Characters that are packaging, never part of a credential. Straight
+# quotes and whitespace were already handled; the rest are what a secret
+# picks up when it is copied out of a chat window or a phone.
+_PACKAGING_CHARS = (
+    " \t\r\n"
+    "\"'`"
+    "\u2018\u2019"  # curly single quotes
+    "\u201c\u201d"  # curly double quotes
+    "\u00a0"        # non-breaking space
+    "\u200b\u200c\u200d"  # zero-width space / non-joiner / joiner
+    "\ufeff"        # byte-order mark
+)
+
+_PACKAGING_NAMES = {
+    "`": "backtick",
+    "\u2018": "curly quote",
+    "\u2019": "curly quote",
+    "\u201c": "curly quote",
+    "\u201d": "curly quote",
+    "\u00a0": "non-breaking space",
+    "\u200b": "zero-width space",
+    "\u200c": "zero-width non-joiner",
+    "\u200d": "zero-width joiner",
+    "\ufeff": "byte-order mark",
+    "\n": "newline",
+    "\r": "carriage return",
+    "\t": "tab",
+}
 
 
 def normalize_credential(value: Optional[str]) -> str:
@@ -102,7 +141,7 @@ def normalize_credential(value: Optional[str]) -> str:
 
         return ""
 
-    text = str(value).strip().strip('"').strip("'").strip()
+    text = str(value).strip(_PACKAGING_CHARS)
 
     # A pasted TOML/env line, e.g. SPAS_ADMIN_PASSWORD_HASH = "abc"
     if "=" in text:
@@ -111,11 +150,22 @@ def normalize_credential(value: Optional[str]) -> str:
 
         if head.strip().upper().startswith("SPAS_"):
 
-            text = tail.strip().strip('"').strip("'").strip()
+            text = tail.strip(_PACKAGING_CHARS)
 
     if text.lower().startswith("sha256:"):
 
-        text = text.split(":", 1)[1].strip()
+        text = text.split(":", 1)[1].strip(_PACKAGING_CHARS)
+
+    # A digest wrapped in anything else -- `abc…`, "abc…" from a phone
+    # keyboard, "abc…," in a sentence -- is still that digest. This is
+    # what a secret that reported itself as "plaintext, 66 characters"
+    # actually was: a 64-character SHA-256 with two characters of
+    # packaging around it.
+    match = _DIGEST_ANYWHERE.search(text)
+
+    if match:
+
+        return match.group(1).lower()
 
     # Hex digests are case-insensitive; normalise so a capitalised
     # copy-and-paste still matches.
@@ -160,9 +210,22 @@ def credential_kind() -> str:
 
 
 def credential_status() -> dict:
-    """Non-secret description of the configured credential, for the UI."""
+    """
+    Non-secret description of the configured credential, for the UI.
+
+    ``packaging`` lists what had to be stripped before the value could be
+    used (backticks, curly quotes, a trailing newline …). It is empty for
+    a clean secret, which makes a paste mistake visible instead of
+    mysterious. ``fingerprint`` is only ever produced for a digest: six
+    leading and four trailing hex characters identify which secret is
+    loaded without disclosing it.
+    """
+
+    raw = os.environ.get(ADMIN_PASSWORD_ENV, "")
 
     value = configured_hash()
+
+    packaging = credential_packaging(raw)
 
     return {
         "configured": value is not None,
@@ -170,6 +233,93 @@ def credential_status() -> dict:
         "length": len(value) if value else 0,
         "using_default": value is None,
         "variable": ADMIN_PASSWORD_ENV,
+        "packaging": packaging,
+        "fingerprint": (
+            f"{value[:6]}…{value[-4:]}"
+            if value and _HEX_DIGEST.match(value)
+            else ""
+        ),
+    }
+
+
+def credential_packaging(raw: str) -> list[str]:
+    """Describe the non-credential characters that were stripped."""
+
+    removed: list[str] = []
+
+    for char, name in _PACKAGING_NAMES.items():
+
+        count = raw.count(char)
+
+        if count:
+
+            removed.append(f"{name} x{count}")
+
+    return removed
+
+
+def credential_diagnostics() -> dict:
+    """
+    Everything a deployment needs to answer "why is my password wrong?".
+
+    Never includes the secret itself -- only its shape.
+    """
+
+    raw = os.environ.get(ADMIN_PASSWORD_ENV, "")
+
+    clean = normalize_credential(raw)
+
+    status = credential_status()
+
+    warnings: list[str] = []
+
+    if not clean:
+
+        warnings.append(
+            f"{ADMIN_PASSWORD_ENV} is not set: the documented development "
+            "password is active."
+        )
+
+    else:
+
+        is_hex = bool(re.fullmatch(r"[0-9a-fA-F]+", clean))
+
+        if is_hex and len(clean) != 64:
+
+            warnings.append(
+                f"the value is hexadecimal but {len(clean)} characters "
+                "long; a SHA-256 digest is exactly 64, so this is being "
+                "treated as a plaintext password."
+            )
+
+        if status["kind"] == "plaintext":
+
+            warnings.append(
+                "the value is being treated as a plaintext password "
+                "(it is not a 64-character SHA-256 digest)."
+            )
+
+        if status["packaging"]:
+
+            warnings.append(
+                "packaging was stripped from the secret ("
+                + ", ".join(status["packaging"])
+                + "); this is repaired automatically, and is the most "
+                "common reason a correct-looking value never matched."
+            )
+
+        if len(raw) != len(clean) and not status["packaging"]:
+
+            warnings.append(
+                f"the raw secret is {len(raw)} characters but its usable "
+                f"form is {len(clean)}."
+            )
+
+    return {
+        "raw_length": len(raw),
+        "clean_length": len(clean),
+        **status,
+        "warnings": warnings,
     }
 
 
@@ -207,6 +357,27 @@ def _record_failure() -> None:
 
 def attempts_remaining() -> int:
     return max(AUTH_MAX_ATTEMPTS - _attempts(), 0)
+
+
+def verification_hint() -> Optional[str]:
+    """
+    The most recent diagnosis of a failed unlock, if there is one.
+
+    Values:
+        "double_hashed"   the stored secret is SHA-256 of SHA-256
+        "typed_the_digest" the entered text *is* the stored digest
+        None              nothing specific to say
+
+    Both are real mistakes people make with a secrets box, and both look
+    identical to a wrong password from the outside.
+    """
+
+    return st.session_state.get(HINT_KEY)
+
+
+def clear_verification_hint() -> None:
+
+    st.session_state[HINT_KEY] = None
 
 
 def reset_attempts() -> None:
@@ -283,19 +454,61 @@ def verify_admin_password(password: str) -> bool:
 
         st.session_state[ATTEMPTS_KEY] = 0
 
+        st.session_state[HINT_KEY] = None
+
         logger.info("Training Mode unlocked.")
 
         return True
 
     _record_failure()
 
+    st.session_state[HINT_KEY] = _diagnose_mismatch(expected, provided)
+
     logger.warning(
-        "Failed Training Mode unlock (%d/%d).",
+        "Failed Training Mode unlock (%d/%d)%s.",
         _attempts(),
         AUTH_MAX_ATTEMPTS,
+        (
+            f" -- {st.session_state[HINT_KEY]}"
+            if st.session_state[HINT_KEY]
+            else ""
+        ),
     )
 
     return False
+
+
+def _diagnose_mismatch(expected: str, provided: str) -> Optional[str]:
+    """
+    Name the two failures that a "wrong password" message hides.
+
+    Neither is accepted -- they are only diagnosed, because a double-hashed
+    secret means the deployment stored the wrong thing, and typing the
+    digest is not authentication.
+    """
+
+    if not provided:
+
+        return None
+
+    if _HEX_DIGEST.match(expected):
+
+        # The administrator pasted the *stored hash* into the password box.
+        if hmac.compare_digest(provided.lower(), expected):
+
+            return "typed_the_digest"
+
+        # The secret is hash(hash(password)): the digest was hashed again,
+        # so no password can ever match it.
+        if hmac.compare_digest(hash_password(hash_password(provided)), expected):
+
+            return "double_hashed"
+
+    elif _HEX_DIGEST.match(provided.strip().lower()):
+
+        return "typed_the_digest"
+
+    return None
 
 
 # ============================================================
@@ -323,9 +536,28 @@ def _main(argv: list[str]) -> int:
     if len(argv) >= 2 and argv[1] == "check":
 
         # Diagnose a deployment without printing the secret.
-        status = credential_status()
+        status = credential_diagnostics()
 
-        print(f"{ADMIN_PASSWORD_ENV}: {status['kind']} ({status['length']} chars)")
+        print(
+            f"{ADMIN_PASSWORD_ENV}: {status['kind']} "
+            f"({status['clean_length']} chars usable, "
+            f"{status['raw_length']} raw)"
+        )
+
+        if status["fingerprint"]:
+
+            print(f"  digest fingerprint: {status['fingerprint']}")
+
+        if status["packaging"]:
+
+            print(
+                "  packaging stripped: "
+                + ", ".join(status["packaging"])
+            )
+
+        for warning in status["warnings"]:
+
+            print(f"  note: {warning}")
 
         if status["kind"] == "hash":
 

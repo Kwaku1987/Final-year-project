@@ -10,7 +10,7 @@ role-based modes for an administrator (train) and a lecturer (assess), model
 persistence, per-student SHAP explanations, risk/intervention advice, and
 PDF/Excel reporting.
 
-![status](https://img.shields.io/badge/tests-173%20passing-brightgreen)
+![status](https://img.shields.io/badge/tests-194%20passing-brightgreen)
 ![python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 
@@ -138,7 +138,7 @@ Code6/student_performance_app/
 ├── scripts/                      synthetic data generator, CLI trainer,
 │                                  results-table generator, preflight,
 │                                  smoke test
-├── tests/                        173 pytest tests
+├── tests/                        194 pytest tests
 └── docs/                         METHODOLOGY · MODEL_CARD · DATA_PROTECTION
 ```
 
@@ -151,7 +151,7 @@ object, with **one shared config** so no component invents its own schema.
 ## Tests
 
 ```bash
-python -m pytest tests -q          # 173 passed, ~45 s
+python -m pytest tests -q          # 194 passed, ~46 s
 ```
 
 The suite encodes the fixes: the label source is never a predictor, labels are

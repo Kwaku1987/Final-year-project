@@ -58,9 +58,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from backend.config import DEFAULT_DB_PATH as DEFAULT_DB_PATH_CONFIG
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_DB_PATH = "data/spas.db"
+# Absolute, so a hosted deployment that starts the process in a
+# different directory still writes one predictable file (see
+# backend.config.APP_DIR). SPAS_DB_PATH still overrides it.
+DEFAULT_DB_PATH = str(DEFAULT_DB_PATH_CONFIG)
 
 ENABLED = os.environ.get("SPAS_DB_ENABLED", "1") == "1"
 

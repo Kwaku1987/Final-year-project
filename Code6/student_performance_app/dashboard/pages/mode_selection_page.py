@@ -23,6 +23,7 @@ from utils.auth import (
     credential_status,
     is_admin_unlocked,
     reset_attempts,
+    verification_hint,
     verify_admin_password,
 )
 
@@ -82,7 +83,22 @@ def render_mode_selection_page(
 
             st.caption(
                 "🔒 Password configured as a SHA-256 hash "
-                f"({status['length']} characters)."
+                f"({status['length']} characters"
+                + (
+                    f", {status['fingerprint']}"
+                    if status.get("fingerprint")
+                    else ""
+                )
+                + ")."
+            )
+
+        if status.get("packaging"):
+
+            st.caption(
+                "🧹 Packaging was stripped from the secret ("
+                + ", ".join(status["packaging"])
+                + ") — it is repaired automatically, and is the usual "
+                "reason a correct-looking value never matched."
             )
 
         password = st.text_input(
@@ -147,11 +163,34 @@ def render_mode_selection_page(
                 # A bare "wrong password" hid three different problems:
                 # no credential configured, a credential in an
                 # unexpected format, and a genuine typo. Say which.
+                hint = verification_hint()
+
                 if attempts_remaining() <= 0:
 
                     st.error(
-                        "Too many failed attempts. Reload the page to "
-                        "try again."
+                        "Too many failed attempts. Use "
+                        "**Reset attempts and try again** below the "
+                        "form."
+                    )
+
+                elif hint == "typed_the_digest":
+
+                    st.error(
+                        "That value is the **stored SHA-256 digest**, not "
+                        "the password. The digest is what the secret "
+                        "holds; the password is what you type. Enter the "
+                        "password itself."
+                    )
+
+                elif hint == "double_hashed":
+
+                    st.error(
+                        "The configured secret is the SHA-256 **of the "
+                        "digest** — the hash was hashed a second time, so "
+                        "no password can ever match it. Regenerate it "
+                        "from the password: "
+                        '`python -m utils.auth hash "your-password"`, '
+                        "paste that, then **Manage app → Reboot**."
                     )
 
                 elif status["kind"] == "default":
@@ -225,6 +264,16 @@ def render_mode_selection_page(
             st.warning(
                 "No saved model found yet. An Administrator "
                 "needs to train and save one first."
+            )
+
+            # Say where it looked. The hosted app used to miss a bundle
+            # that was committed, because the process starts in the
+            # repository root while the path was relative; without the
+            # resolved path the symptom is indistinguishable from "the
+            # file is not there".
+            st.caption(
+                "Looked for `models/best_model.pkl` at "
+                f"`{controller.DEFAULT_MODEL_PATH}`."
             )
 
         if st.button(

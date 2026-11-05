@@ -6,6 +6,45 @@ All notable changes to this project. Format loosely follows
 
 ---
 
+## [3.3.5] — 2026-11-05 — "The two things the live app still got wrong"
+
+Both were reported from the deployed app, and both were invisible from inside
+the code: the password was rejected, and the committed model was "not found".
+
+* **The password.** The deployed secret was reported as *"plaintext, 66
+  characters"* — a 64-character SHA-256 digest wrapped in two characters of
+  packaging (a backtick, a brace, a curly quote, a non-breaking space: whatever
+  it was copied through). `normalize_credential()` now strips the packaging and,
+  failing that, **recovers a 64-hex digest from anywhere inside the value**; a hex
+  string of the wrong length is *not* truncated to a digest, it is reported as
+  such. `credential_diagnostics()` (behind `python -m utils.auth check`) prints
+  the raw versus usable length, everything it stripped, and a fingerprint
+  (first six / last four characters) so you can recognise which secret is
+  loaded without printing it.
+* **Two failures that look like a wrong password** are now named: typing the
+  stored **digest** into the password box, and storing
+  `hash(hash(password))` — i.e. running `utils.auth hash` on a digest, which no
+  password can satisfy. Neither is accepted; both are diagnosed, because the fix
+  is in the secret, not the typing. A successful unlock clears the hint.
+* **The model.** The hosted app said "No saved model found yet" while
+  `models/best_model.pkl` was committed, because **Community Cloud starts the
+  process in the repository root** (`streamlit run Code6/student_performance_app/
+  app.py`) whereas a local run starts inside the app directory: the relative
+  default `models/best_model.pkl` resolved one level above the bundle.
+  `backend/config.py` now derives `APP_DIR` from `__file__`, and the model and
+  SQLite paths are absolute (`DEFAULT_MODEL_PATH`, `DEFAULT_DB_PATH`); the
+  framework's four `model_path` defaults and `DashboardController` use them. The
+  "not found" message prints the resolved path, so the next mismatch is
+  diagnosable from the UI rather than by reading the source.
+* 21 new tests: the deployed 66-character secret in seven packaging shapes,
+  digest-recovery boundaries (66 hex chars must not become a digest), the two
+  unlock hints, the same packaged secret unlocking Training Mode through the
+  real page, and `tests/test_paths_and_deployment.py` — which boots the app with
+  the working directory set to the **repository root** and asserts Assessment
+  Mode finds the bundle. **194 total**, ~46 s.
+
+---
+
 ## [3.3.4] — 2026-11-05 — "Fix the deployed app: dark theme, real password diagnosis, no crash"
 
 Three faults reported from the live app, plus the feature work that was worth

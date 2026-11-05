@@ -79,6 +79,7 @@ from backend.persistence.store import (
     get_store,
 )
 
+from backend.config import DEFAULT_MODEL_PATH as CONFIGURED_MODEL_PATH
 from backend.reporting.report_engine import ReportEngine
 from backend.reporting.pdf_exporter import PDFExporter
 from backend.reporting.excel_exporter import ExcelExporter
@@ -676,7 +677,11 @@ class DashboardController:
     # ADMINISTRATOR / TRAINING MODE : TRAIN & SAVE
     # =======================================================
 
-    DEFAULT_MODEL_PATH = "models/best_model.pkl"
+    # Absolute (backend.config.APP_DIR /models/best_model.pkl). A relative
+    # default made the hosted app look for the bundle in the repository
+    # root on Community Cloud, where the process starts, instead of beside
+    # the app -- see the note in backend/config.py.
+    DEFAULT_MODEL_PATH = str(CONFIGURED_MODEL_PATH)
 
     def train_and_save_system(
         self,

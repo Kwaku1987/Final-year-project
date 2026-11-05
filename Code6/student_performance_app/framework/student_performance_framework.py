@@ -59,6 +59,7 @@ from backend.interpretation.shap_explainer import (
 
 from backend.config import (
     CALIBRATION,
+    DEFAULT_MODEL_PATH,
     FEATURE_COLUMNS as _CONFIG_FEATURE_COLUMNS,
     LABEL_POLICY,
     TUNING,
@@ -1803,7 +1804,7 @@ class StudentPerformanceFramework:
 
     def save_best_model(
         self,
-        model_path: str = "models/best_model.pkl",
+        model_path: str = str(DEFAULT_MODEL_PATH),
         allow_leaky_target: bool = False,
     ) -> str:
         """
@@ -2062,7 +2063,7 @@ class StudentPerformanceFramework:
 
     def load_best_model(
         self,
-        model_path: str = "models/best_model.pkl",
+        model_path: str = str(DEFAULT_MODEL_PATH),
     ) -> str:
         """
         Load a previously saved model bundle, restoring enough
@@ -2228,7 +2229,7 @@ class StudentPerformanceFramework:
 
     @staticmethod
     def has_saved_model(
-        model_path: str = "models/best_model.pkl",
+        model_path: str = str(DEFAULT_MODEL_PATH),
     ) -> bool:
         """
         Check whether a saved model bundle exists on disk.
@@ -2240,7 +2241,7 @@ class StudentPerformanceFramework:
 
     @staticmethod
     def delete_saved_model(
-        model_path: str = "models/best_model.pkl",
+        model_path: str = str(DEFAULT_MODEL_PATH),
     ) -> bool:
         """
         Delete a saved model bundle from disk, so an

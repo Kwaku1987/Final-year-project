@@ -146,6 +146,56 @@ def test_lockout_can_be_cleared_without_a_reload(
     )
 
 
+def test_packaged_digest_unlocks_with_the_real_password(
+    monkeypatch,
+) -> None:
+    """
+    The exact deployed state: the secret holds a correct digest wrapped in
+    backticks, so it was described as "plaintext, 66 characters" and every
+    attempt failed. It must now unlock with the real password.
+    """
+
+    monkeypatch.setenv(ADMIN_PASSWORD_ENV, f"`{DIGEST}`")
+
+    app = _boot()
+
+    captions = " ".join(c.value for c in app.caption)
+
+    assert "SHA-256 hash" in captions
+
+    assert "backtick x2" in captions
+
+    app.text_input[0].input(PASSWORD)
+
+    [b for b in app.button if "Enter Training Mode" in b.label][0].click()
+
+    app.run()
+
+    assert not app.exception
+
+    assert app.session_state["application_state"].application_mode == (
+        "administrator"
+    )
+
+
+def test_typing_the_digest_explains_itself(monkeypatch) -> None:
+    """A wrong-password message that names the actual mistake."""
+
+    monkeypatch.setenv(ADMIN_PASSWORD_ENV, DIGEST)
+
+    app = _boot()
+
+    app.text_input[0].input(DIGEST)
+
+    [b for b in app.button if "Enter Training Mode" in b.label][0].click()
+
+    app.run()
+
+    errors = " ".join(e.value for e in app.error)
+
+    assert "stored SHA-256 digest" in errors
+
+
 def test_sidebar_reports_the_deployment_state(hash_credential) -> None:
     """
     The panel that answers "what am I actually looking at?" -- the four

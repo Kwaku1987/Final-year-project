@@ -79,13 +79,38 @@ from __future__ import annotations
 
 import os
 
+from pathlib import Path
+
 from typing import Dict, List, Optional, Sequence, Tuple
 
 # ============================================================
 # PROJECT CONFIGURATION
 # ============================================================
 
-PROJECT_VERSION = "3.3.4"
+PROJECT_VERSION = "3.3.5"
+
+# ------------------------------------------------------------
+# APPLICATION DIRECTORY
+# ------------------------------------------------------------
+# Every default file path is resolved against this directory rather
+# than the process working directory.
+#
+# Why this exists: Streamlit Community Cloud launches the app with the
+# working directory set to the REPOSITORY ROOT (it runs
+# ``streamlit run Code6/student_performance_app/app.py``), while a local
+# run happens inside Code6/student_performance_app. With the old
+# relative defaults, the hosted app looked for
+# ``<repo>/models/best_model.pkl`` -- one directory above the bundle
+# that is committed -- so the deployed Assessment Mode reported "No
+# saved model found yet" while the same code worked locally. Paths must
+# not depend on where the process happens to be started.
+APP_DIR = Path(__file__).resolve().parents[1]
+
+# The production model bundle.
+DEFAULT_MODEL_PATH = APP_DIR / "models" / "best_model.pkl"
+
+# The SQLite file used when SPAS_DB_PATH is not set.
+DEFAULT_DB_PATH = APP_DIR / "data" / "spas.db"
 
 TEST_SIZE = 0.20
 

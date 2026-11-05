@@ -143,6 +143,143 @@ def test_credential_status_never_contains_the_secret(
 
 
 # ------------------------------------------------------------
+# The deployed failure: "plaintext, 66 characters"
+# ------------------------------------------------------------
+
+# sha256("Admin123456") -- the credential that was actually configured on
+# the live app while the app reported it as a 66-character plaintext.
+DEPLOYED_DIGEST = (
+    "1cd73874884db6a0f9f21d853d7e9eacdc773c39ee389060f5e96ae0bcb4773a"
+)
+DEPLOYED_PASSWORD = "Admin123456"
+
+
+@pytest.mark.parametrize(
+    "wrapped",
+    [
+        f"`{DEPLOYED_DIGEST}`",          # backticks from a chat message
+        f"\u201c{DEPLOYED_DIGEST}\u201d",  # curly quotes from a phone
+        f"'{DEPLOYED_DIGEST}' ",
+        f"[{DEPLOYED_DIGEST}]",
+        f"{DEPLOYED_DIGEST},",
+        f"{DEPLOYED_DIGEST}\u00a0",     # non-breaking space
+        f"\ufeff{DEPLOYED_DIGEST}\u200b",
+    ],
+)
+def test_digest_is_recovered_from_packaging(session, monkeypatch, wrapped):
+    """
+    The live app reported the secret as "plaintext, 66 characters": a
+    64-character digest plus two characters of packaging. The password was
+    correct and could never match, because the comparison saw the
+    packaging as part of the credential.
+    """
+
+    monkeypatch.setenv(ADMIN_PASSWORD_ENV, wrapped)
+
+    status = auth.credential_status()
+
+    assert status["kind"] == "hash", status
+
+    assert status["length"] == 64
+
+    assert auth.verify_admin_password(DEPLOYED_PASSWORD) is True
+
+
+def test_packaging_is_reported_so_the_mistake_is_visible(
+    session, monkeypatch
+) -> None:
+    monkeypatch.setenv(ADMIN_PASSWORD_ENV, f"`{DEPLOYED_DIGEST}`")
+
+    status = auth.credential_status()
+
+    assert status["packaging"] == ["backtick x2"]
+
+    assert status["fingerprint"] == (
+        DEPLOYED_DIGEST[:6] + "…" + DEPLOYED_DIGEST[-4:]
+    )
+
+    diagnostics = auth.credential_diagnostics()
+
+    assert diagnostics["raw_length"] == 66
+
+    assert diagnostics["clean_length"] == 64
+
+    assert any("packaging" in warning for warning in diagnostics["warnings"])
+
+    # Still never the secret itself.
+    assert DEPLOYED_DIGEST not in repr(diagnostics)
+
+
+def test_hex_of_the_wrong_length_is_not_mistaken_for_a_digest(
+    session, monkeypatch
+) -> None:
+    """66 hex characters is not 64: do not silently truncate to a digest."""
+
+    monkeypatch.setenv(ADMIN_PASSWORD_ENV, DEPLOYED_DIGEST + "ab")
+
+    assert auth.credential_kind() == "plaintext"
+
+    diagnostics = auth.credential_diagnostics()
+
+    assert diagnostics["clean_length"] == 66
+
+    assert any(
+        "hexadecimal but 66 characters" in warning
+        for warning in diagnostics["warnings"]
+    )
+
+
+# ------------------------------------------------------------
+# The other two ways a "wrong password" happens
+# ------------------------------------------------------------
+
+def test_typing_the_digest_is_diagnosed(session, monkeypatch) -> None:
+    """The digest is what is stored; the password is what is typed."""
+
+    monkeypatch.setenv(ADMIN_PASSWORD_ENV, DEPLOYED_DIGEST)
+
+    assert auth.verify_admin_password(DEPLOYED_DIGEST) is False
+
+    assert auth.verification_hint() == "typed_the_digest"
+
+
+def test_a_double_hashed_secret_is_diagnosed(session, monkeypatch) -> None:
+    """
+    ``python -m utils.auth hash "<the digest>"`` produces a secret that no
+    password can satisfy. Saying so is the difference between a five-minute
+    fix and an afternoon.
+    """
+
+    monkeypatch.setenv(
+        ADMIN_PASSWORD_ENV, auth.hash_password(DEPLOYED_DIGEST)
+    )
+
+    assert auth.verify_admin_password(DEPLOYED_PASSWORD) is False
+
+    assert auth.verification_hint() == "double_hashed"
+
+
+def test_hint_is_cleared_by_a_successful_unlock(session, monkeypatch) -> None:
+    monkeypatch.setenv(ADMIN_PASSWORD_ENV, DEPLOYED_DIGEST)
+
+    auth.verify_admin_password(DEPLOYED_DIGEST)
+
+    assert auth.verification_hint() == "typed_the_digest"
+
+    assert auth.verify_admin_password(DEPLOYED_PASSWORD) is True
+
+    assert auth.verification_hint() is None
+
+
+def test_no_hint_for_a_plain_typo(session, monkeypatch) -> None:
+    monkeypatch.setenv(ADMIN_PASSWORD_ENV, DEPLOYED_DIGEST)
+
+    assert auth.verify_admin_password("Adm1n123456") is False
+
+    assert auth.verification_hint() is None
+
+
+# ------------------------------------------------------------
 # Verification
 # ------------------------------------------------------------
 

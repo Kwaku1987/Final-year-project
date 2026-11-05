@@ -237,6 +237,20 @@ all three are now committed.
      which it has and compares digests either way. A hash is the better choice
      (the secret stays unreadable in the dashboard); the mode-selection page
      says which one is active, and never prints the value.
+
+     Two mistakes are so easy to make here that the app now detects them:
+
+     * **Packaging.** A digest copied out of a chat window or a phone arrives
+       wrapped in backticks, curly quotes, a non-breaking space or a trailing
+       comma — 64 characters of digest in 66 characters of text. The wrapper is
+       stripped before comparison (this was the actual cause of one deployed
+       "wrong password": the app described the secret as *"plaintext, 66
+       characters"*). Also stripped: a whole `SPAS_ADMIN_PASSWORD_HASH = "…"`
+       line, straight quotes, `sha256:` prefixes, trailing newlines, uppercase
+       hex.
+     * **Hashing the hash.** `python -m utils.auth hash "<the digest>"` stores
+       `sha256(sha256(password))`, which no password can satisfy. The page says
+       so instead of "incorrect password".
 5. *Deploy*. The first build installs the pinned dependencies and takes several
    minutes.
 6. Verify: `python scripts/smoke_test.py --url https://<your-app>.streamlit.app`
@@ -255,6 +269,21 @@ every reboot and redeploy. So:
 * If you need a durable audit trail, that is the compose stack (§4.5) or a small
   VPS (§6), where `/data/spas.db` sits on a real volume.
 
+**"No saved model found yet" on the hosted app**
+
+`models/best_model.pkl` is committed, so this should not happen — and if you see
+it, you are looking at the pre-3.3.5 behaviour. Community Cloud starts the process
+in the **repository root** (`streamlit run Code6/student_performance_app/app.py`),
+while a local run starts it inside the app directory. Every default path used to
+be relative, so the hosted app searched `<repo>/models/best_model.pkl` — one
+directory above the bundle — found nothing, and reported it as a missing model.
+
+Since 3.3.5, `backend/config.py` resolves `APP_DIR` from `__file__` and the model
+and SQLite paths are absolute. The page also prints the path it looked at, so a
+mismatch is visible rather than mysterious. `tests/test_paths_and_deployment.py`
+boots the app with the working directory set to the repository root and asserts
+Assessment Mode finds the bundle.
+
 **"Training Mode says my password is wrong"**
 
 Three different problems used to produce that one message, so the page now says
@@ -272,9 +301,12 @@ which one you have, and the failure is diagnosable from the app itself:
    python -m utils.auth verify "your-password" # match / no match
    ```
 
-   `check` never prints the secret. If it reports `default`, nothing is
-   configured; if it reports a credential but `verify` says *no match*, the
-   value you are typing is not the value you stored.
+   `check` never prints the secret; it prints the credential's **shape** — kind,
+   usable length versus raw length, a digest fingerprint (first six and last four
+   characters, enough to recognise which secret is loaded), and any packaging it
+   had to strip. If it reports `default`, nothing is configured; if it reports a
+   credential but `verify` says *no match*, the value you are typing is not the
+   value you stored.
 3. Common causes, all of which the app now tolerates or explains:
 
    * the **whole line** was pasted (`SPAS_ADMIN_PASSWORD_HASH = "abc…"`) — the
