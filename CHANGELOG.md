@@ -54,9 +54,15 @@ doing while those files were open. Every fix is pinned by a test.
   "Version 5.0"; it prints `PROJECT_VERSION`. Its feature caption no longer
   claims "CPI-based target generation" — the shipped model predicts an exam band,
   and CPI is a demoted rule-reconstruction baseline.
-* 61 new tests — `test_auth_credentials.py` (34), `test_ui_regressions.py` (10),
-  `test_history_export.py` (11), `test_mode_selection_ui.py` (6); **172 total**
-  (111 before), 43 s. The UI ones drive the real `app.py` through
+* **The devcontainer is now usable.** A collaborator's Codespaces config
+  (`059fb4f`) used a Python **3.11** image and launched Streamlit from the
+  repository root; the pins do not install on 3.11, so the container could never
+  have run the app. Now 3.12, launched from the app directory, with the CORS/XSRF
+  relaxations on the command line rather than in the committed config — and a
+  test that keeps it that way.
+* 62 new tests — `test_auth_credentials.py` (34), `test_ui_regressions.py` (11),
+  `test_history_export.py` (11), `test_mode_selection_ui.py` (6); **173 total**
+  (111 before), ~45 s. The UI ones drive the real `app.py` through
   `streamlit.testing`, so the crash paths are exercised, not just described.
 
 ---

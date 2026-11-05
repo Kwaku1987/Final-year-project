@@ -348,3 +348,39 @@ def test_both_streamlit_configs_request_the_dark_theme() -> None:
         assert theme.get("backgroundColor")
 
         assert theme.get("textColor")
+
+
+def test_devcontainer_python_matches_the_pins() -> None:
+    """
+    A Codespaces image on 3.11 builds a container that cannot install
+    xgboost/shap, i.e. an environment where the app cannot start. CI only
+    covers the versions in the workflow, so pin the devcontainer too.
+    """
+
+    import re
+
+    path = REPO_ROOT / ".devcontainer" / "devcontainer.json"
+
+    if not path.exists():
+
+        pytest.skip("no devcontainer in this checkout")
+
+    text = path.read_text(encoding="utf-8")
+
+    image = re.search(r'"image"\s*:\s*"([^"]+)"', text)
+
+    assert image, "devcontainer.json has no image"
+
+    assert "3.12" in image.group(1), (
+        "devcontainer image must be Python 3.12+: " + image.group(1)
+    )
+
+    # CORS/XSRF must be relaxed on the command line, never in the
+    # committed Streamlit config.
+    assert "--server.enableCORS false" in text
+
+    config = (APP_ROOT / ".streamlit" / "config.toml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "enableCORS = true" in config
