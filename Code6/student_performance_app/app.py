@@ -53,7 +53,7 @@ import streamlit as st
 # ============================================================
 # Streamlit Community Cloud exposes settings through st.secrets, not
 # through the process environment. Copy the known keys into os.environ
-# first, so backend/config.py, utils/auth.py and the persistence layer
+# first, so backend/config.py and the persistence layer
 # see the same values they would on Docker or a bare server. A real
 # environment variable always wins, which makes this a no-op there.
 
@@ -86,7 +86,6 @@ from dashboard.pages.mode_selection_page import (
     render_mode_selection_page,
 )
 
-from utils.auth import is_admin_unlocked
 from utils.styles import load_theme
 
 from dashboard.application_state import ApplicationState
@@ -159,19 +158,6 @@ def main() -> None:
     ApplicationState.initialize()
 
     controller = get_controller()
-
-    # If the administrator session has been re-locked (mode
-    # switch, reset, or a stale session), drop back to the mode
-    # screen rather than rendering Training Mode pages to a
-    # visitor who is no longer authorised.
-    if (
-        controller.application_mode == "administrator"
-        and not is_admin_unlocked()
-    ):
-
-        # application_mode is read-only; assigning to it raised
-        # AttributeError at runtime. The controller owns the state.
-        controller.clear_mode()
 
     # Mode-selection gate: nothing else renders until the user
     # has chosen Administrator (Training Mode) or Lecturer

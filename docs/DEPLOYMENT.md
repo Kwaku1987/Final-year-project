@@ -22,10 +22,15 @@ to real users without retraining on a real, de-identified cohort is a
 
 The app has two modes with different threat models:
 
-- **Assessment Mode** — no password. It collects a form, runs the model, shows
-  explanations. It never reads the training data and never writes to it.
-- **Training Mode** — password protected. Loads a CSV, trains, compares models,
-  saves/deletes bundles. This is the privileged surface.
+- **Assessment Mode** — loads a form, runs the model, shows explanations. It
+  never reads the training data and never writes to it.
+- **Training Mode** — loads a CSV, trains, compares models, saves/deletes
+  bundles. This is the privileged surface, and **it has no password**: it is one
+  click from the mode screen. That is a deliberate choice (a shared password
+  typed into a public URL was more friction than protection), and it means a
+  public deployment should be treated as a demo: anyone who can reach the app can
+  retrain or delete the model. Every entry is written to the audit trail as
+  `training_mode_entered`.
 
 ---
 
@@ -85,12 +90,7 @@ cd Code6/student_performance_app
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# optional but recommended: set a real Training Mode password
-python -m utils.auth hash "your-password"      # prints a SHA-256 digest
-export SPAS_ADMIN_PASSWORD_HASH=<digest pasted here>
-
-python -m utils.auth check                     # is a credential configured?
-python -m utils.auth verify "your-password"     # does it match? (exit 0 = yes)
+# no password to configure: Training Mode is one click away (see §0)
 
 python scripts/preflight.py                    # expect "READY WITH WARNINGS"
 streamlit run app.py                           # http://localhost:8501
@@ -128,7 +128,6 @@ layer caches, then copies the app, creates uid/gid `10001`, and drops to it.
 ```bash
 docker run -d --name spas \
   -p 127.0.0.1:8501:8501 \
-  -e SPAS_ADMIN_PASSWORD_HASH="$SPAS_ADMIN_PASSWORD_HASH" \
   -e SPAS_DB_PATH=/data/spas.db \
   -v spas-data:/data \
   -v "$PWD/Code6/student_performance_app/models:/app/models:ro" \
@@ -172,9 +171,9 @@ deploy, restart and spin-down.
 1. Render dashboard → *New* → *Blueprint* → select this repository. Render reads
    `render.yaml`, builds the root `Dockerfile` and creates a free web service in
    `frankfurt` (change `region` if that is wrong for you).
-2. When prompted, set `SPAS_ADMIN_PASSWORD_HASH` (dashboard → *Environment*).
-   Generate it with `python -m utils.auth hash "your-password"`. It is marked
-   `sync: false` in the blueprint, so it is never read from git.
+2. No secrets are needed. Training Mode has no password gate, and there is no
+   database server to point at; the blueprint sets `SPAS_DB_ENABLED=0` because a
+   free instance has no persistent disk.
 3. Wait for the first build (~3–5 min), then check the health path
    `/_stcore/health` returns `ok`.
 4. Verify from your machine:
@@ -208,7 +207,7 @@ all three are now committed.
 |---|---|---|
 | `requirements.txt` in the **repository root** | [`requirements.txt`](../requirements.txt) → `-r Code6/student_performance_app/requirements.txt` | Cloud installs from the root and does **not** search subdirectories. Without it the app deploys with no pins and dies on `import xgboost`. |
 | `.streamlit/config.toml` in the **repository root** | [`.streamlit/config.toml`](../.streamlit/config.toml) | Cloud launches from the repo root, so the app-directory copy is never read: you would get Streamlit's defaults — tracebacks shown to users, no upload cap. |
-| `st.secrets` → `os.environ` bridge | `utils/runtime_env.py`, called first in `app.py` | Cloud exposes settings as secrets, not environment variables. Without the bridge the app starts with no password hash and silently falls back to the development password. |
+| `st.secrets` → `os.environ` bridge | `utils/runtime_env.py`, called first in `app.py` | Cloud exposes settings as secrets, not environment variables. Without the bridge the app ignores the Secrets box entirely and runs on its defaults. |
 
 **Deploy**
 
@@ -218,39 +217,14 @@ all three are now committed.
 4. *Advanced settings*:
    * **Python version: 3.12** (not optional — `xgboost==3.4.1` and
      `shap==0.54.1` both require ≥ 3.12 and the build fails on 3.11).
-   * **Secrets**: paste the block from
-     `Code6/student_performance_app/.streamlit/secrets.toml.example`, with
-     `SPAS_ADMIN_PASSWORD_HASH` filled in. Either form works:
-
-     ```toml
-     SPAS_ADMIN_PASSWORD_HASH = "5e884898da28…1542d8"   # sha256 of the password
-     ```
-
-     or, if you would rather type your password directly,
-
-     ```toml
-     SPAS_ADMIN_PASSWORD_HASH = "your-password"
-     ```
-
-     The variable keeps its historical name, but the value is accepted as a
-     64-character SHA-256 digest **or** a plaintext password: the app detects
-     which it has and compares digests either way. A hash is the better choice
-     (the secret stays unreadable in the dashboard); the mode-selection page
-     says which one is active, and never prints the value.
-
-     Two mistakes are so easy to make here that the app now detects them:
-
-     * **Packaging.** A digest copied out of a chat window or a phone arrives
-       wrapped in backticks, curly quotes, a non-breaking space or a trailing
-       comma — 64 characters of digest in 66 characters of text. The wrapper is
-       stripped before comparison (this was the actual cause of one deployed
-       "wrong password": the app described the secret as *"plaintext, 66
-       characters"*). Also stripped: a whole `SPAS_ADMIN_PASSWORD_HASH = "…"`
-       line, straight quotes, `sha256:` prefixes, trailing newlines, uppercase
-       hex.
-     * **Hashing the hash.** `python -m utils.auth hash "<the digest>"` stores
-       `sha256(sha256(password))`, which no password can satisfy. The page says
-       so instead of "incorrect password".
+   * **Secrets — optional.** Nothing secret is required: there is no password
+     gate, and the app has no external services. If you want to pin behaviour,
+     paste the block from
+     `Code6/student_performance_app/.streamlit/secrets.toml.example`
+     (`SPAS_DB_ENABLED = "0"` is the one that matters on Cloud; the rest set the
+     target definition and search/calibration flags). `utils/runtime_env.py`
+     copies those keys into the environment at startup, and a real environment
+     variable always wins.
 5. *Deploy*. The first build installs the pinned dependencies and takes several
    minutes.
 6. Verify: `python scripts/smoke_test.py --url https://<your-app>.streamlit.app`
@@ -284,45 +258,18 @@ mismatch is visible rather than mysterious. `tests/test_paths_and_deployment.py`
 boots the app with the working directory set to the repository root and asserts
 Assessment Mode finds the bundle.
 
-**"Training Mode says my password is wrong"**
+**"Anyone with the link can retrain the model"**
 
-Three different problems used to produce that one message, so the page now says
-which one you have, and the failure is diagnosable from the app itself:
+Correct — there is no password gate. Two ways to live with that:
 
-1. Boot the app and read the caption on the mode-selection page. It states
-   either *"Password configured as a SHA-256 hash (64 characters)"*, *"A password
-   is configured (plaintext, N characters)"*, or a red *"No administrator
-   password is configured"* warning. If it says *no password configured*, the
-   secret is not reaching the app at all — see step 3.
-2. Run the checker where the app runs (**Manage app → Terminal** on Cloud):
-
-   ```bash
-   python -m utils.auth check                 # hash | plaintext | default
-   python -m utils.auth verify "your-password" # match / no match
-   ```
-
-   `check` never prints the secret; it prints the credential's **shape** — kind,
-   usable length versus raw length, a digest fingerprint (first six and last four
-   characters, enough to recognise which secret is loaded), and any packaging it
-   had to strip. If it reports `default`, nothing is configured; if it reports a
-   credential but `verify` says *no match*, the value you are typing is not the
-   value you stored.
-3. Common causes, all of which the app now tolerates or explains:
-
-   * the **whole line** was pasted (`SPAS_ADMIN_PASSWORD_HASH = "abc…"`) — the
-     prefix and quotes are stripped automatically;
-   * a trailing newline, `'`/`"` around the value, a `sha256:` prefix, or
-     uppercase hex — all normalised before comparison;
-   * the secret was saved as a **Variable** instead of a **Secret** — Community
-     Cloud only guarantees `st.secrets`; `utils/runtime_env.py` bridges secrets
-     into the environment at startup, so a Secret is what you want;
-   * the secret was changed but the app was not restarted — use *Manage app →
-     Reboot*.
-4. Five failed attempts pause the password form for that session. Earlier this
-   was permanent (the counter lives in session state, which survives the "reload
-   the page" the UI suggested); there is now a **"Reset attempts and try again"**
-   button. The counter is a guard against typos, not a security boundary — the
-   password is.
+* keep the public URL as a **demo**: the shipped bundle means Assessment Mode
+  works with no dataset, and a visitor who retrains it only affects their own
+  session (the repository is unchanged), but they can also *delete* the model for
+  everyone until the next reboot/redeploy, when it is restored from git;
+* publish **Assessment Mode only** (or put the whole app behind your
+  institution's login / a VPN) if the model matters. The app sets
+  `showErrorDetails = false` and keeps CORS/XSRF on, but neither is
+  authentication.
 
 **What to expect on the free tier**
 
@@ -332,16 +279,15 @@ which one you have, and the failure is diagnosable from the app itself:
   small. Train locally and commit the bundle if the demo matters.
 * **Sleeps after 12 quiet hours**; the next visitor sees a "waking up" page.
 * **One private app** at a time, **no custom domain**, and the URL is public.
-* **Assessment Mode has no password by design.** On a public URL that means
-  anyone with the link can type student names and scores into your app — which
-  makes it personal data on your host. Use invented names in the demo, or keep
-  Training Mode as the only gate and don't advertise the link.
+* **Nothing is gated.** On a public URL anyone with the link can assess students
+  *and* retrain or delete the model. Assessment Mode never stores the training
+  data, but anything typed into the form is personal data on your host: use
+  invented names in a demo, and do not advertise the link.
 
 ### 4.5 Compose (the normal path)
 
 ```bash
 cp .env.example .env
-# edit .env: set SPAS_ADMIN_PASSWORD_HASH
 docker compose up -d --build
 docker compose logs -f
 docker compose ps          # STATUS should read "healthy" after ~40s
@@ -365,7 +311,7 @@ python scripts/smoke_test.py --url http://127.0.0.1:8501
 python scripts/smoke_test.py --url https://spas.your-domain.edu.gh --json
 ```
 
-`preflight.py --production` fails on insecure defaults (no password hash, CORS
+`preflight.py --production` reports on deployment hazards (CORS
 or XSRF disabled, tracebacks shown). `smoke_test.py` checks the health endpoint,
 the HTML shell, the static bundle, and response headers — the four things that
 are usually broken when "the app doesn't load".
@@ -602,8 +548,8 @@ they are **not** in this repository because they are decisions, not code:
 3. **Institutional sign-off.** The output is advisory. State in writing, to
    whoever owns the process, that the band is a prompt for a human decision and
    not a grade.
-4. **Authentication beyond a shared password.** Training Mode uses one shared
-   password, and there is no per-user identity or role separation. For anything
+4. **Any authentication at all.** Training Mode has no password and there is no
+   per-user identity or role separation. For anything
    beyond a single trusted operator, put the app behind institutional SSO at the
    proxy layer (e.g. OAuth2-proxy or your campus IdP) so `audit_events.actor`
    reflects a real person.
@@ -648,10 +594,10 @@ make docker-smoke # smoke-test through the host port
 make docker-down  # stop, keep the volume
 ```
 
-Environment variables that matter: `SPAS_ADMIN_PASSWORD_HASH` (required in
-production), `SPAS_DB_PATH`, `SPAS_DB_ENABLED`, `SPAS_TARGET_DEFINITION`,
-`SPAS_LABEL_METHOD`, `SPAS_TUNING`, `SPAS_CALIBRATION`. All are documented in
-`.env.example`.
+Environment variables that matter: `SPAS_DB_ENABLED` and `SPAS_DB_PATH`
+(storage), `SPAS_TARGET_DEFINITION`, `SPAS_LABEL_METHOD`, `SPAS_TUNING`,
+`SPAS_CALIBRATION` (model behaviour). None of them is a secret; all are
+documented in `.env.example`.
 
 ---
 

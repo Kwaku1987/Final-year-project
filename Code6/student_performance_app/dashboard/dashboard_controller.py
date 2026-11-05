@@ -736,11 +736,18 @@ class DashboardController:
     # LECTURER / ASSESSMENT MODE : LOAD SAVED MODEL
     # =======================================================
 
-    def log_admin_unlock(self, success: bool) -> None:
-        """Record an attempt to enter Training Mode."""
+    def log_training_mode_entry(self) -> None:
+        """
+        Record that Training Mode was opened.
+
+        There is no password gate any more, so there is no unlock to
+        audit -- but "who entered Training Mode" is still worth writing
+        down, because entering it is what allows retraining and deleting
+        the production model.
+        """
 
         audit(
-            "admin_unlocked" if success else "admin_unlock_failed",
+            "training_mode_entered",
             actor="administrator",
         )
 

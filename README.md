@@ -10,7 +10,7 @@ role-based modes for an administrator (train) and a lecturer (assess), model
 persistence, per-student SHAP explanations, risk/intervention advice, and
 PDF/Excel reporting.
 
-![status](https://img.shields.io/badge/tests-194%20passing-brightgreen)
+![status](https://img.shields.io/badge/tests-144%20passing-brightgreen)
 ![python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 
@@ -60,11 +60,13 @@ Then:
 
 * **Lecturer / Assessment Mode** → *Load Saved Model* → assess students
   immediately with the bundled model (no dataset needed).
-* **Administrator / Training Mode** → password (`change-me-admin` by default; set
-  `SPAS_ADMIN_PASSWORD_HASH`, see [`docs/DATA_PROTECTION.md`](Code6/student_performance_app/docs/DATA_PROTECTION.md))
-  → upload a dataset → train → save. The secret may be a SHA-256 digest **or**
-  the plaintext password; `python -m utils.auth check` says which one the app
-  found, and `python -m utils.auth verify "your-password"` tests it.
+* **Administrator / Training Mode** → one click (no password) → upload a
+  dataset → train → save. There is no gate, by choice: a shared password in front
+  of a public Streamlit URL was friction, not protection, so a public deployment
+  is a demo — anyone who can reach it can retrain or delete the model. Every
+  entry is written to the audit trail. See
+  [`docs/DATA_PROTECTION.md`](Code6/student_performance_app/docs/DATA_PROTECTION.md)
+  for what that does and does not cover.
 
 > ⚠️ **The version pins matter.** `models/best_model.pkl` was written by
 > scikit-learn 1.9.x; with an older scikit-learn it fails to load with
@@ -92,9 +94,9 @@ python scripts/train_model.py --data data/synthetic_cohort.csv \
 | **Explainable AI** | Global feature importance (coefficients / Gini), plain-English insights, recommendations, methodology caveats |
 | **Assessment Mode** | Lecturer workflow: load the saved model, assess by name/ID, history, PDF |
 | **Reports** | PDF student report, Excel batch report |
-| **Governance** | Password-gated Training Mode, single-source config, model card, version guard on load, MIT licence |
-| **Persistence** | Assessments and an audit trail of every privileged action (`admin_unlocked`, `dataset_loaded`, `model_saved`, …) survive restarts, in SQLite |
-| **Deployment status** | Sidebar panel states the loaded model's role and validation strategy, whether history is stored, and whether Training Mode is really password-protected |
+| **Governance** | Explicit two-mode boundary, single-source config, model card, version guard on load, audit trail, MIT licence |
+| **Persistence** | Assessments and an audit trail of every privileged action (`training_mode_entered`, `dataset_loaded`, `model_saved`, …) survive restarts, in SQLite |
+| **Deployment status** | Sidebar panel states the loaded model's role and validation strategy, whether history is stored, and that Training Mode is open |
 | **Validation design** | Temporal split (train earlier semesters, test the latest) alongside the random split, with the change reported per model |
 | **Fairness** | Hold-out performance disaggregated by gender, programme and entry qualification; small subgroups flagged, never averaged away |
 
@@ -134,11 +136,11 @@ Code6/student_performance_app/
 │   ├── persistence/              SQLite store: assessments + audit trail
 │   └── eda/                      exploratory analysis (wired into the UI)
 ├── components/sidebar.py
-├── utils/                        auth (password gate), theme
+├── utils/                        runtime-env bridge, styling
 ├── scripts/                      synthetic data generator, CLI trainer,
 │                                  results-table generator, preflight,
 │                                  smoke test
-├── tests/                        194 pytest tests
+├── tests/                        144 pytest tests
 └── docs/                         METHODOLOGY · MODEL_CARD · DATA_PROTECTION
 ```
 
@@ -151,7 +153,7 @@ object, with **one shared config** so no component invents its own schema.
 ## Tests
 
 ```bash
-python -m pytest tests -q          # 194 passed, ~46 s
+python -m pytest tests -q          # 144 passed, ~45 s
 ```
 
 The suite encodes the fixes: the label source is never a predictor, labels are
@@ -207,15 +209,15 @@ The image honours `$PORT`, so it runs unmodified on Render, Cloud Run, Railway o
 Fly as well as on compose. For **Streamlit Community Cloud** the repository root
 now carries the `requirements.txt` and `.streamlit/config.toml` that Cloud reads
 (it does not look inside subdirectories), and `utils/runtime_env.py` maps
-`st.secrets` into the environment so the password hash and DB settings actually
-take effect. A free-tier Render blueprint is included
+`st.secrets` into the environment so the DB and model settings actually take
+effect. A free-tier Render blueprint is included
 ([`render.yaml`](render.yaml)) — good for a public Assessment-Mode demo; training
 needs ≥ 1 GB of RAM and belongs on the compose stack or a small VPS.
 
 > ⚠️ Deployment-ready is not the same as fit to serve students. Five items
 > remain, and they are decisions rather than code: real-cohort retraining, the
 > temporal and fairness runs on that cohort, institutional sign-off, per-user
-> authentication (there is one shared Training Mode password), and Act 843
+> authentication (there is none — Training Mode is open), and Act 843
 > operational duties. See §9 of the deployment guide.
 
 ---

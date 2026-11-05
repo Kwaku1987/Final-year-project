@@ -6,6 +6,44 @@ All notable changes to this project. Format loosely follows
 
 ---
 
+## [3.3.6] — 2026-11-05 — "No password: Training Mode is one click away"
+
+The administrator password is gone, at the owner's request, and so is everything
+that existed to serve it. **This is a deliberate reduction in protection, not a
+fix**, and the documentation says so rather than quietly dropping the subject.
+
+Removed:
+
+* `utils/auth.py` — the SHA-256 verification, the attempt counter, the lockout,
+  the credential diagnostics and the `hash` / `check` / `verify` CLI. Deleted, not
+  left disabled, so there is no dead path that looks like a gate.
+* the password field, "Incorrect password" branches, "Reset attempts" button and
+  the diagnosis panel on the mode-selection page: **"Enter Training Mode" is now
+  a single click.**
+* `SPAS_ADMIN_PASSWORD_HASH` from `backend/config.py`, `utils/runtime_env.py`,
+  `.env.example`, `secrets.toml.example`, `render.yaml`, the `Dockerfile`
+  example, CI and the compose docs; `ADMIN_PASSWORD_DEFAULT` and
+  `AUTH_MAX_ATTEMPTS` with it.
+* `app.py` no longer re-locks a "stale" administrator session, because there is no
+  session to re-lock.
+
+Kept, because removing it would have made the deployment dishonest:
+
+* the mode screen and the sidebar say, in one line each, that Training Mode is
+  open and that anyone who can reach the URL can retrain or delete the model;
+* entering Training Mode is still audited, now as `training_mode_entered`
+  (`log_admin_unlock` → `log_training_mode_entry`);
+* `preflight.py` reports the missing gate as a warning instead of implying
+  protection that no longer exists;
+* CORS/XSRF stay on, tracebacks stay hidden, uploads stay capped.
+
+Tests went from 194 to 144 (the credential suite was deleted with the code it
+tested) and now include the removal itself: no `utils.auth` import anywhere, no
+password widget on the mode screen, one click into Training Mode, and no
+`SPAS_ADMIN_PASSWORD_HASH` / `change-me-admin` left in the source.
+
+---
+
 ## [3.3.5] — 2026-11-05 — "The two things the live app still got wrong"
 
 Both were reported from the deployed app, and both were invisible from inside

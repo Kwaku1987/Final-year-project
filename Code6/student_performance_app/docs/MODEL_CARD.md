@@ -132,7 +132,8 @@ scores 0.90 accuracy on a target with a 0.90 majority class has learned nothing.
   Protection Act, 2012 (Act 843)**. Lawful basis, retention and access control
   are the deploying institution's responsibility; see
   `docs/DATA_PROTECTION.md`.
-* Training Mode is password-gated; Assessment Mode requires no training data.
+* Training Mode has no password gate (see `docs/DATA_PROTECTION.md`); Assessment
+  Mode requires no training data.
 * No fairness disaggregation is performed. Before any real deployment, metrics
   should be reported by gender, programme and entry qualification, and subgroup
   performance compared.

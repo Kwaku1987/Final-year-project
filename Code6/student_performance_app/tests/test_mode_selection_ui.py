@@ -1,53 +1,39 @@
 """
-The mode-selection page, driven end to end with ``AppTest``.
+The mode screen, driven end to end with ``AppTest``.
 
-This is the screen the user was stuck on: it answered every failed
-unlock with "Incorrect password" whether the cause was a typo, a paste
-error, or no credential at all, and five typos left it unusable. These
-tests pin the replacement behaviour:
+Training Mode used to be behind an administrator password. It is not any
+more: the gate was removed at the owner's request, and this file pins
+what replaced it --
 
-* say what credential is configured (and never print it);
-* name the variable to fix when a password really is wrong;
-* offer a way out of the attempt limit.
+* no password field, no attempt counter, no lockout: one click enters
+  Training Mode;
+* the screen still discloses, in one caption, that entering it is
+  unrestricted (a deployment should not be surprised by that);
+* entering it can never raise, and the sidebar's deployment panel still
+  describes what is loaded.
 
-They run the real ``app.py`` in-process, so a change that breaks the page
-at import or render time fails here rather than in production.
+The last test guards the removal itself: if ``utils/auth`` or a password
+prompt comes back, this suite fails.
 """
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from backend.config import ADMIN_PASSWORD_ENV, AUTH_MAX_ATTEMPTS
 
+APP_ROOT = Path(__file__).resolve().parents[1]
 
-APP = str(Path(__file__).resolve().parents[1] / "app.py")
-
-PASSWORD = "CorrectHorseBatteryStaple"
-
-DIGEST = hashlib.sha256(PASSWORD.encode("utf-8")).hexdigest()
+APP = str(APP_ROOT / "app.py")
 
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
-    """No credential and no database writes unless a test asks for them."""
-
-    monkeypatch.delenv(ADMIN_PASSWORD_ENV, raising=False)
+    """No database writes; nothing else is needed to open Training Mode."""
 
     monkeypatch.setenv("SPAS_DB_ENABLED", "0")
-
-
-@pytest.fixture()
-def hash_credential(monkeypatch) -> str:
-    """The deployed configuration: a SHA-256 digest in the secret."""
-
-    monkeypatch.setenv(ADMIN_PASSWORD_ENV, DIGEST)
-
-    return DIGEST
 
 
 def _boot() -> AppTest:
@@ -59,117 +45,43 @@ def _boot() -> AppTest:
     return app
 
 
-def test_no_configured_credential_is_reported_as_a_warning() -> None:
+def _click(app: AppTest, label: str) -> None:
+
+    matches = [button for button in app.button if label in button.label]
+
+    assert matches, [button.label for button in app.button]
+
+    matches[0].click()
+
+    app.run()
+
+
+# ------------------------------------------------------------
+# Straight through
+# ------------------------------------------------------------
+
+def test_the_mode_screen_has_no_password_field() -> None:
+    """No prompt, no attempt counter, no "enter password" button."""
+
     app = _boot()
 
     assert not app.exception
 
-    warnings = " ".join(w.value for w in app.warning)
+    assert app.text_input == []
 
-    assert "No administrator password is configured" in warnings
+    labels = [button.label for button in app.button]
 
-    # And it must not silently pretend Training Mode is protected.
-    assert "change-me-admin" in warnings
+    assert "Enter Training Mode" in labels
 
-
-def test_configured_hash_is_described_without_being_printed(
-    hash_credential,
-) -> None:
-
-    app = _boot()
-
-    assert not app.exception
-
-    captions = " ".join(c.value for c in app.caption)
-
-    assert "SHA-256 hash" in captions
-
-    assert hash_credential not in captions
+    assert not any("password" in label.lower() for label in labels)
 
 
-def test_wrong_password_names_the_variable_to_fix(
-    hash_credential,
-) -> None:
+def test_training_mode_is_one_click_away() -> None:
+    """The point of the change: no credential stands between the user and the app."""
 
     app = _boot()
 
-    app.text_input[0].input("definitely-not-it")
-
-    [b for b in app.button if "Enter Training Mode" in b.label][0].click()
-
-    app.run()
-
-    errors = " ".join(e.value for e in app.error)
-
-    assert ADMIN_PASSWORD_ENV in errors
-
-    assert "Incorrect password" in errors
-
-    # The attempt budget is stated, not implied.
-    assert f"{AUTH_MAX_ATTEMPTS - 1} attempt(s) left" in errors
-
-
-def test_lockout_can_be_cleared_without_a_reload(
-    hash_credential,
-) -> None:
-    """
-    The old message said "reload the page" -- which does not work,
-    because the counter lives in session state.
-    """
-
-    app = AppTest.from_file(APP, default_timeout=180)
-
-    app.session_state["admin_auth_attempts"] = AUTH_MAX_ATTEMPTS
-
-    app.run()
-
-    assert not app.exception
-
-    assert any(
-        "Too many failed attempts" in e.value for e in app.error
-    )
-
-    reset = [
-        button for button in app.button if "Reset attempts" in button.label
-    ]
-
-    assert reset, [b.label for b in app.button]
-
-    reset[0].click()
-
-    app.run()
-
-    assert app.session_state["admin_auth_attempts"] == 0
-
-    assert any(
-        "Enter Training Mode" in button.label for button in app.button
-    )
-
-
-def test_packaged_digest_unlocks_with_the_real_password(
-    monkeypatch,
-) -> None:
-    """
-    The exact deployed state: the secret holds a correct digest wrapped in
-    backticks, so it was described as "plaintext, 66 characters" and every
-    attempt failed. It must now unlock with the real password.
-    """
-
-    monkeypatch.setenv(ADMIN_PASSWORD_ENV, f"`{DIGEST}`")
-
-    app = _boot()
-
-    captions = " ".join(c.value for c in app.caption)
-
-    assert "SHA-256 hash" in captions
-
-    assert "backtick x2" in captions
-
-    app.text_input[0].input(PASSWORD)
-
-    [b for b in app.button if "Enter Training Mode" in b.label][0].click()
-
-    app.run()
+    _click(app, "Enter Training Mode")
 
     assert not app.exception
 
@@ -178,37 +90,42 @@ def test_packaged_digest_unlocks_with_the_real_password(
     )
 
 
-def test_typing_the_digest_explains_itself(monkeypatch) -> None:
-    """A wrong-password message that names the actual mistake."""
-
-    monkeypatch.setenv(ADMIN_PASSWORD_ENV, DIGEST)
+def test_assessment_mode_is_one_click_away() -> None:
+    """The lecturer path never needed a password and still does not."""
 
     app = _boot()
 
-    app.text_input[0].input(DIGEST)
+    _click(app, "Enter Assessment Mode")
 
-    [b for b in app.button if "Enter Training Mode" in b.label][0].click()
+    assert not app.exception
 
-    app.run()
-
-    errors = " ".join(e.value for e in app.error)
-
-    assert "stored SHA-256 digest" in errors
+    assert app.session_state["application_state"].application_mode == (
+        "lecturer"
+    )
 
 
-def test_sidebar_reports_the_deployment_state(hash_credential) -> None:
+def test_the_screen_says_the_training_door_is_open() -> None:
     """
-    The panel that answers "what am I actually looking at?" -- the four
-    facts that decide whether a number on screen can be trusted.
+    Removing the gate is a decision, not an oversight: the mode screen has
+    to say so, because a public URL then exposes retraining and model
+    deletion to anyone who opens it.
     """
 
     app = _boot()
 
-    app.text_input[0].input(PASSWORD)
+    text = " ".join(c.value for c in app.caption)
 
-    [b for b in app.button if "Enter Training Mode" in b.label][0].click()
+    assert "No password" in text
 
-    app.run()
+    assert "retrain and delete the model" in text
+
+
+def test_sidebars_deployment_panel_still_describes_the_app() -> None:
+    """The panel that answers "what am I looking at?" survives the removal."""
+
+    app = _boot()
+
+    _click(app, "Enter Training Mode")
 
     assert not app.exception
 
@@ -216,31 +133,84 @@ def test_sidebar_reports_the_deployment_state(hash_credential) -> None:
 
     assert "Model role" in captions
 
-    # No bundle is loaded yet, so it must not claim one.
     assert "not_loaded" in captions
 
-    assert "Training Mode password" in captions
-
-    assert "hash" in captions
+    assert "Training Mode" in captions
 
     assert "History" in captions
 
 
-def test_correct_password_still_unlocks_training_mode(
-    hash_credential,
-) -> None:
-    """The fixes must not have moved the goalposts on the happy path."""
+# ------------------------------------------------------------
+# The removal itself
+# ------------------------------------------------------------
 
-    app = _boot()
+def test_no_module_imports_the_removed_auth_module() -> None:
+    """
+    A dangling ``from utils.auth import ...`` is an ImportError at
+    startup, i.e. a blank page on the deployed app.
+    """
 
-    app.text_input[0].input(PASSWORD)
+    assert not (APP_ROOT / "utils" / "auth.py").exists()
 
-    [b for b in app.button if "Enter Training Mode" in b.label][0].click()
+    offenders = []
 
-    app.run()
+    # tests/ is excluded: this file has to name what is gone in order to
+    # assert that it is gone.
+    for path in APP_ROOT.rglob("*.py"):
 
-    assert not app.exception
+        if {
+            "__pycache__",
+            ".venv",
+            "build",
+            "dist",
+            "tests",
+        }.intersection(path.parts):
 
-    state = app.session_state["application_state"]
+            continue
 
-    assert state.application_mode == "administrator"
+        text = path.read_text(encoding="utf-8")
+
+        if "utils.auth" in text or "utils import auth" in text:
+
+            offenders.append(str(path.relative_to(APP_ROOT)))
+
+    assert not offenders, offenders
+
+
+def test_no_password_settings_survive_in_the_codebase() -> None:
+    """The variable, the default password and the attempt limit are gone."""
+
+    names = {
+        "ADMIN_PASSWORD_ENV",
+        "ADMIN_PASSWORD_DEFAULT",
+        "SPAS_ADMIN_PASSWORD_HASH",
+        "AUTH_MAX_ATTEMPTS",
+        "verify_admin_password",
+        "change-me-admin",
+    }
+
+    offenders: dict[str, list[str]] = {}
+
+    # tests/ is excluded: this file has to name what is gone in order to
+    # assert that it is gone.
+    for path in APP_ROOT.rglob("*.py"):
+
+        if {
+            "__pycache__",
+            ".venv",
+            "build",
+            "dist",
+            "tests",
+        }.intersection(path.parts):
+
+            continue
+
+        text = path.read_text(encoding="utf-8")
+
+        hits = sorted(name for name in names if name in text)
+
+        if hits:
+
+            offenders[str(path.relative_to(APP_ROOT))] = hits
+
+    assert not offenders, offenders

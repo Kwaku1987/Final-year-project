@@ -31,11 +31,9 @@ services:
     healthCheckPath: /_stcore/health
     autoDeploy: true
     envVars:
-      # Set in the Render dashboard (Environment tab). Never commit it.
-      # Generate: python -m utils.auth hash "your-password"
-      - key: SPAS_ADMIN_PASSWORD_HASH
-        sync: false
-
+      # No secrets are required: there is no password gate (Training Mode
+      # is one click away) and no database server to point at.
+      #
       # No persistent disk on the free plan: keep the app stateless so
       # it degrades honestly instead of pretending to store history.
       - key: SPAS_DB_ENABLED

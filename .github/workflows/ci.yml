@@ -56,8 +56,7 @@ jobs:
       - name: Preflight (strict)
         working-directory: ${{ env.APP_DIR }}
         env:
-          # A throwaway hash so strict mode passes in CI.
-          SPAS_ADMIN_PASSWORD_HASH: 5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8
+          # Keep the SQLite file out of the checkout.
           SPAS_DB_PATH: ${{ github.workspace }}/ci-data/spas.db
         run: python scripts/preflight.py --production
 
@@ -76,7 +75,6 @@ jobs:
         run: |
           docker run -d --name spas-ci \
             -p 8501:8501 \
-            -e SPAS_ADMIN_PASSWORD_HASH=5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8 \
             -e SPAS_DB_PATH=/data/spas.db \
             spas:ci
 

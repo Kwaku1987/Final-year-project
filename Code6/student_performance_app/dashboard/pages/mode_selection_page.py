@@ -18,15 +18,6 @@ import streamlit as st
 
 from dashboard.dashboard_controller import DashboardController
 
-from utils.auth import (
-    attempts_remaining,
-    credential_status,
-    is_admin_unlocked,
-    reset_attempts,
-    verification_hint,
-    verify_admin_password,
-)
-
 
 def render_mode_selection_page(
     controller: DashboardController,
@@ -58,190 +49,24 @@ def render_mode_selection_page(
             "lecturers to use."
         )
 
-        status = credential_status()
-
-        if status["kind"] == "default":
-
-            st.warning(
-                "🔐 **No administrator password is configured.** The "
-                "documented development password (`change-me-admin`) is "
-                "active, which means anyone who finds this URL can enter "
-                "Training Mode. Set `SPAS_ADMIN_PASSWORD_HASH` in your "
-                "host's secrets."
-            )
-
-        elif status["kind"] == "plaintext":
-
-            st.info(
-                "🔑 A password is configured (plaintext, "
-                f"{status['length']} characters). It works, but store the "
-                "**hash** instead: "
-                "`python -m utils.auth hash \"your-password\"`."
-            )
-
-        else:
-
-            st.caption(
-                "🔒 Password configured as a SHA-256 hash "
-                f"({status['length']} characters"
-                + (
-                    f", {status['fingerprint']}"
-                    if status.get("fingerprint")
-                    else ""
-                )
-                + ")."
-            )
-
-        if status.get("packaging"):
-
-            st.caption(
-                "🧹 Packaging was stripped from the secret ("
-                + ", ".join(status["packaging"])
-                + ") — it is repaired automatically, and is the usual "
-                "reason a correct-looking value never matched."
-            )
-
-        password = st.text_input(
-            "Administrator password",
-            type="password",
-            key="admin_password_input",
-            help=(
-                "Training Mode can retrain and delete the model "
-                "lecturers depend on, so it is password-gated."
-            ),
-        )
-
-        if attempts_remaining() <= 0:
-
-            st.error(
-                "Too many failed attempts in this session — the "
-                "password form is paused."
-            )
-
-            if st.button(
-                "🔁 Reset attempts and try again",
-                use_container_width=True,
-            ):
-
-                reset_attempts()
-
-                st.rerun()
-
-            st.caption(
-                "The attempt counter is a guard against typos, not a "
-                "security boundary; the password itself is. Fix the "
-                "secret first — expand *Still failing? Diagnose it* "
-                "below."
-            )
-
-            with st.expander("Still failing? Diagnose it"):
-
-                st.markdown(
-                    "Run these in the app's own environment (on "
-                    "Community Cloud: **Manage app → Terminal**):\n\n"
-                    "```bash\npython -m utils.auth check\n```"
-                )
-
-        elif st.button(
+        if st.button(
             "Enter Training Mode",
             type="primary",
             use_container_width=True,
         ):
 
-            succeeded = verify_admin_password(password)
+            controller.log_training_mode_entry()
 
-            controller.log_admin_unlock(succeeded)
+            controller.set_mode("administrator")
 
-            if succeeded:
+            st.rerun()
 
-                controller.set_mode("administrator")
-
-                st.rerun()
-
-            else:
-
-                # A bare "wrong password" hid three different problems:
-                # no credential configured, a credential in an
-                # unexpected format, and a genuine typo. Say which.
-                hint = verification_hint()
-
-                if attempts_remaining() <= 0:
-
-                    st.error(
-                        "Too many failed attempts. Use "
-                        "**Reset attempts and try again** below the "
-                        "form."
-                    )
-
-                elif hint == "typed_the_digest":
-
-                    st.error(
-                        "That value is the **stored SHA-256 digest**, not "
-                        "the password. The digest is what the secret "
-                        "holds; the password is what you type. Enter the "
-                        "password itself."
-                    )
-
-                elif hint == "double_hashed":
-
-                    st.error(
-                        "The configured secret is the SHA-256 **of the "
-                        "digest** — the hash was hashed a second time, so "
-                        "no password can ever match it. Regenerate it "
-                        "from the password: "
-                        '`python -m utils.auth hash "your-password"`, '
-                        "paste that, then **Manage app → Reboot**."
-                    )
-
-                elif status["kind"] == "default":
-
-                    st.error(
-                        "Incorrect password. No password has been "
-                        "configured for this deployment, so the "
-                        "development password (`change-me-admin`) is in "
-                        f"use. {attempts_remaining()} attempt(s) left."
-                    )
-
-                else:
-
-                    st.error(
-                        "Incorrect password — the value you typed does "
-                        "not match the credential configured in "
-                        f"`{status['variable']}` ({status['kind']}, "
-                        f"{status['length']} characters). "
-                        f"{attempts_remaining()} attempt(s) left."
-                    )
-
-                with st.expander("Still failing? Diagnose it"):
-
-                    st.markdown(
-                        "The credential is read from the host's "
-                        "environment or secrets, not from this form.\n\n"
-                        "1. **Run the checker on the same host:**\n"
-                        "   ```bash\n"
-                        "   python -m utils.auth check\n"
-                        "   ```\n"
-                        "   It prints whether a credential is set, "
-                        "whether it is a hash or a plaintext password, "
-                        "and never prints the secret itself.\n"
-                        "2. **Test a password against it:**\n"
-                        "   ```bash\n"
-                        "   python -m utils.auth verify \"your-password\"\n"
-                        "   ```\n"
-                        "3. **Common causes:**\n"
-                        "   * the **password** was pasted instead of its "
-                        "hash — both are accepted, but the password must "
-                        "be the exact one you type here;\n"
-                        "   * the secret was saved with the quotes or "
-                        "the `SPAS_ADMIN_PASSWORD_HASH =` prefix (both "
-                        "are now stripped automatically);\n"
-                        "   * the value was changed but the app has not "
-                        "rebooted — use *Manage app → Reboot*;\n"
-                        "   * the secret is in *Variables* instead of "
-                        "*Secrets* — Community Cloud only guarantees "
-                        "`st.secrets`; this app bridges those into the "
-                        "environment at startup."
-                    )
+        st.caption(
+            "🔓 No password. Training Mode can retrain and delete the "
+            "model, so this is for a local or departmental deployment; "
+            "on a public URL anyone who opens it can do the same. "
+            "Entering it is recorded in the audit trail."
+        )
 
     with col2:
 

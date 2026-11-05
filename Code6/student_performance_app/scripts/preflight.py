@@ -320,19 +320,17 @@ def check_storage() -> None:
 
 def check_security(production: bool) -> None:
 
-    from utils.auth import is_using_default_password
-
-    if is_using_default_password():
-
-        message = (
-            "SPAS_ADMIN_PASSWORD_HASH is not set: Training Mode "
-            "uses the documented development password"
-        )
-
-        record(FAIL if production else WARN, "security", message)
-
-    else:
-        record(OK, "security", "administrator password hash configured")
+    # Training Mode has no password gate by design (see the note in
+    # backend/config.py). Preflight cannot make it safe, so it says so
+    # plainly instead of implying a protection that does not exist.
+    record(
+        WARN,
+        "security",
+        "Training Mode has NO password gate: anyone who can reach "
+        "this app can retrain or delete the model. Publish Assessment "
+        "Mode only, or run the app behind your institution's login"
+        + (" -- this looks like a production deployment." if production else "."),
+    )
 
     config = APP_DIR / ".streamlit" / "config.toml"
 

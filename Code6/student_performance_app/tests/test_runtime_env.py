@@ -58,16 +58,16 @@ def test_secrets_reach_the_environment():
 
     applied = apply_secrets(
         source={
-            "SPAS_ADMIN_PASSWORD_HASH": "abc123",
             "SPAS_DB_ENABLED": "0",
+            "SPAS_TARGET_DEFINITION": "exam_band",
         }
     )
 
-    assert "SPAS_ADMIN_PASSWORD_HASH" in applied
-
-    assert os.environ["SPAS_ADMIN_PASSWORD_HASH"] == "abc123"
+    assert "SPAS_DB_ENABLED" in applied
 
     assert os.environ["SPAS_DB_ENABLED"] == "0"
+
+    assert os.environ["SPAS_TARGET_DEFINITION"] == "exam_band"
 
 
 def test_a_real_environment_variable_wins():
@@ -160,13 +160,13 @@ def test_the_bridge_is_idempotent():
 # LOGGING
 # ============================================================
 
-def test_the_log_line_never_prints_the_password_hash():
+def test_the_log_line_names_keys_without_values():
 
-    line = describe(["SPAS_ADMIN_PASSWORD_HASH", "SPAS_DB_ENABLED"])
-
-    assert "redacted" in line
+    line = describe(["SPAS_DB_ENABLED", "SPAS_TARGET_DEFINITION"])
 
     assert "SPAS_DB_ENABLED" in line
+
+    assert "SPAS_TARGET_DEFINITION" in line
 
 
 def test_the_log_line_says_so_when_nothing_was_applied():
@@ -185,7 +185,6 @@ def test_every_documented_setting_is_bridged():
     """
 
     required = {
-        "SPAS_ADMIN_PASSWORD_HASH",
         "SPAS_DB_PATH",
         "SPAS_DB_ENABLED",
         "SPAS_TARGET_DEFINITION",

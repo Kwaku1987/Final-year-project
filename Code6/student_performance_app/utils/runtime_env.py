@@ -12,7 +12,7 @@ Purpose:
 Why this exists
 ---------------
 Every setting in this project is read from the environment
-(``SPAS_ADMIN_PASSWORD_HASH``, ``SPAS_DB_PATH``, ``SPAS_TARGET_DEFINITION``,
+(``SPAS_DB_PATH``, ``SPAS_TARGET_DEFINITION``,
 ...). That is correct for Docker, Compose, Render and a bare server, where
 environment variables are how you configure a process.
 
@@ -60,8 +60,6 @@ from typing import Any, Iterable, Mapping, Optional
 # with .env.example -- a key that is missing here will not be picked up from
 # Streamlit Cloud's Secrets box.
 SECRET_KEYS = (
-    # required in production
-    "SPAS_ADMIN_PASSWORD_HASH",
     # storage
     "SPAS_DB_PATH",
     "SPAS_DB_ENABLED",

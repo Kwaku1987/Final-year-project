@@ -87,7 +87,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 # PROJECT CONFIGURATION
 # ============================================================
 
-PROJECT_VERSION = "3.3.5"
+PROJECT_VERSION = "3.3.6"
 
 # ------------------------------------------------------------
 # APPLICATION DIRECTORY
@@ -408,20 +408,23 @@ CALIBRATION = {
 }
 
 # ============================================================
-# SECURITY / ACCESS CONTROL
+# ACCESS CONTROL
 # ============================================================
-# Training Mode (dataset upload, retraining, model deletion) is
-# gated behind a password. Set SPAS_ADMIN_PASSWORD_HASH to a
-# SHA-256 hex digest produced by:
+# There is no password gate. Training Mode (dataset upload,
+# retraining, model deletion) is one click away from the mode
+# screen, by design: this is a single-department tool, and a
+# password typed into a public Streamlit URL was more friction
+# than protection.
 #
-#     python -m utils.auth hash "your-password"
-#
-# If the variable is unset, utils.auth falls back to the
-# documented development password and warns loudly in the UI.
+# What that means for a deployment:
+#   * anything reachable on the public internet can retrain or
+#     delete the model, so a public URL should be treated as a
+#     demo, not as the departmental system;
+#   * Assessment Mode (the lecturer path) needs no training data
+#     and no privileges, so it is the half worth publishing;
+#   * every entry into Training Mode is written to the audit
+#     trail ("training_mode_entered"), so use is visible even
+#     though it is not restricted.
 # ------------------------------------------------------------
 
-ADMIN_PASSWORD_ENV = "SPAS_ADMIN_PASSWORD_HASH"
 
-ADMIN_PASSWORD_DEFAULT = "change-me-admin"
-
-AUTH_MAX_ATTEMPTS = 5

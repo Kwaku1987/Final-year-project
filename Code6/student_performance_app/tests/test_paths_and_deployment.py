@@ -85,11 +85,6 @@ def test_assessment_mode_finds_the_bundle_from_the_repository_root(
 
     monkeypatch.setenv("SPAS_DB_ENABLED", "0")
 
-    monkeypatch.setenv(
-        "SPAS_ADMIN_PASSWORD_HASH",
-        "b1a2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
-    )
-
     app = AppTest.from_file(APP, default_timeout=180)
 
     app.run()

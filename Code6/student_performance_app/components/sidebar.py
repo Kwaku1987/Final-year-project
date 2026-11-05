@@ -254,7 +254,7 @@ class Sidebar:
 
     @classmethod
     def _switch_mode(cls) -> None:
-        """Leave the current mode, re-locking Training Mode."""
+        """Leave the current mode and return to the selection screen."""
 
         if cls._controller is not None:
 
@@ -263,15 +263,6 @@ class Sidebar:
             # which is what "Switch Mode" did every time. The
             # controller clears the state itself.
             cls._controller.clear_mode()
-
-        try:
-
-            from utils.auth import lock_admin
-
-            lock_admin()
-
-        except Exception:  # pragma: no cover
-            pass
 
     @classmethod
     def _reset(cls) -> None:
@@ -604,16 +595,6 @@ class Sidebar:
         password. They are one expander away instead of three pages.
         """
 
-        try:
-
-            from utils.auth import credential_status
-
-            status = credential_status()
-
-        except Exception:  # pragma: no cover - defensive
-
-            status = {"kind": "unknown", "configured": False}
-
         with st.expander("🔍 Deployment status", expanded=False):
 
             version = PROJECT_VERSION
@@ -689,25 +670,12 @@ class Sidebar:
                 )
             )
 
-            kind = status.get("kind", "unknown")
-
-            credential_icons = {
-                "hash": "✅",
-                "plaintext": "⚠️",
-                "default": "❌",
-            }
-
+            # Training Mode is deliberately ungated. This line is the
+            # only warning a deployment gets, so it stays.
             st.caption(
-                f"{credential_icons.get(kind, '❔')} **Training Mode "
-                f"password** `{kind}`"
+                "🔓 **Training Mode** open — no password gate: anyone "
+                "who can reach this URL can retrain or delete the model."
             )
-
-            if kind == "default":
-
-                st.caption(
-                    "The development password is active. Do not share "
-                    "this URL."
-                )
 
     @classmethod
     def _project_info(cls) -> None:

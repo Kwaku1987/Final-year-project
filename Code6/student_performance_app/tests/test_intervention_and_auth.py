@@ -133,31 +133,3 @@ def test_shap_explainer_never_raises_on_unsupported_model():
     assert ShapExplainer().explain(Nonsense(), frame) is None
 
 
-# ============================================================
-# AUTH HELPERS
-# ============================================================
-
-def test_password_hashing_is_stable_and_not_reversible():
-
-    from utils.auth import hash_password
-
-    first = hash_password("correct-horse")
-
-    assert first == hash_password("correct-horse")
-
-    assert first != hash_password("correct-horse ")
-
-    assert len(first) == 64
-
-    assert "correct-horse" not in first
-
-
-def test_default_password_hash_differs_from_any_real_hash():
-
-    from utils.auth import hash_password
-
-    from backend.config import ADMIN_PASSWORD_DEFAULT
-
-    assert hash_password(ADMIN_PASSWORD_DEFAULT) != hash_password(
-        "definitely-not-the-default"
-    )
