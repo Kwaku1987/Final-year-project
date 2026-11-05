@@ -54,6 +54,77 @@ INPUT_SPECS = {
 }
 
 
+def build_history_export(history) -> list[dict]:
+    """
+    Flatten assessment records into CSV-ready rows.
+
+    Two shapes arrive here: dicts read back from the SQLite store, and
+    ``AssessmentRecord`` objects held in session state when persistence is
+    unavailable. The export keeps the raw confidence (not the rounded
+    percentage the table shows), the full timestamp, and every input
+    feature that produced the prediction -- otherwise the CSV is no more
+    useful than a screenshot of the table.
+    """
+
+    export_rows: list[dict] = []
+
+    for record in reversed(list(history)):
+
+        if isinstance(record, dict):
+
+            entry = {
+                "student_name": record.get("student_name"),
+                "student_id": record.get("student_id") or "",
+                "prediction": record.get("predicted"),
+                "confidence": record.get("confidence"),
+                "risk_priority": record.get("risk_priority") or "",
+                "risk_score": record.get("risk_score"),
+                "model_name": record.get("model_name") or "",
+                "assessed_at": record.get("created_at") or "",
+            }
+
+            student_data = record.get("student_data") or {}
+
+        else:
+
+            assessed_at = getattr(record, "assessment_date", None)
+
+            entry = {
+                "student_name": getattr(record, "student_name", None),
+                "student_id": getattr(record, "student_id", "") or "",
+                "prediction": getattr(record, "prediction", None),
+                "confidence": getattr(record, "confidence", None),
+                "risk_priority": getattr(record, "risk_priority", "") or "",
+                "risk_score": getattr(record, "risk_score", None),
+                "model_name": getattr(record, "model_name", "") or "",
+                "assessed_at": (
+                    assessed_at.strftime("%Y-%m-%d %H:%M")
+                    if hasattr(assessed_at, "strftime")
+                    else (assessed_at or "")
+                ),
+            }
+
+            student_data = getattr(record, "student_data", {}) or {}
+
+        for key, value in student_data.items():
+
+            entry[f"input_{key}"] = value
+
+        export_rows.append(entry)
+
+    return export_rows
+
+
+def history_csv(history) -> bytes:
+    """The exported history as UTF-8 CSV bytes for ``st.download_button``."""
+
+    return (
+        pd.DataFrame(build_history_export(history))
+        .to_csv(index=False)
+        .encode("utf-8")
+    )
+
+
 def render_assessment_page(controller: DashboardController) -> None:
 
     st.title("📋 Assess Student")
@@ -477,3 +548,33 @@ def render_assessment_page(controller: DashboardController) -> None:
             else "Persistence is unavailable -- this history is "
             "held in the current session only."
         )
+
+        # ----------------------------------------------------
+        # CSV export
+        #
+        # The table above rounds confidence and truncates the
+        # timestamp, which makes it useless for a spreadsheet or a
+        # moderation meeting. Export the raw rows, including the
+        # input features that produced each prediction.
+        # ----------------------------------------------------
+
+        export_rows = build_history_export(history)
+
+        try:
+
+            csv_bytes = history_csv(history)
+
+            st.download_button(
+                "⬇ Download history as CSV",
+                data=csv_bytes,
+                file_name="assessment_history.csv",
+                mime="text/csv",
+                help=(
+                    f"{len(export_rows)} assessment(s), with the input "
+                    "features that produced each prediction."
+                ),
+            )
+
+        except Exception as error:  # pragma: no cover - defensive
+
+            st.caption(f"CSV export unavailable: {error}")

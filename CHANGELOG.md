@@ -6,6 +6,61 @@ All notable changes to this project. Format loosely follows
 
 ---
 
+## [3.3.4] — 2026-11-05 — "Fix the deployed app: dark theme, real password diagnosis, no crash"
+
+Three faults reported from the live app, plus the feature work that was worth
+doing while those files were open. Every fix is pinned by a test.
+
+* **"Switch Mode" crashed with `AttributeError`.** `application_mode` is a
+  read-only property on `DashboardController`; the sidebar and `app.py` both did
+  `controller.application_mode = None`. There is now a `clear_mode()` method and
+  no assignment anywhere — an AST test over every module fails if one comes back.
+* **Seven sidebar helpers were infinitely recursive.** Each `classmethod` ended
+  with `return cls._<its own name>()`, so the first call blew the stack.
+  Fallbacks return `False` / `[]`. A test walks the AST of `components/sidebar.py`
+  and refuses any self-call.
+* **The admin password was always reported wrong.** The comparison now
+  normalises what was actually pasted: the whole `NAME = "value"` line, wrapping
+  quotes, trailing newlines, a `sha256:` prefix, and uppercase hex. A **plaintext**
+  password in `SPAS_ADMIN_PASSWORD_HASH` is accepted as a credential instead of
+  being treated as an error (both branches compare digests, so the check stays
+  constant-time). New `python -m utils.auth check` reports `hash` / `plaintext` /
+  `default` without printing the secret, and `verify <password>` answers a single
+  question with an exit code. The per-subcommand argv guards were wrong (`check`
+  takes no argument, so it was unreachable from the shell) — caught by the new
+  tests, not by reading.
+* **The lockout was permanent.** The failed-attempt counter lives in
+  `st.session_state`, which survives the page reload the old message recommended.
+  There is a **"Reset attempts and try again"** button, and the page says plainly
+  that the counter is a typo guard rather than a security boundary.
+* **The mode-selection page diagnoses instead of rejecting.** It states which
+  credential is configured (hash / plaintext / none), names the variable, and on
+  failure expands a *"Still failing? Diagnose it"* panel with the checker commands
+  and the four real causes.
+* **New: sidebar "Deployment status" panel.** Model role
+  (`production` / `rule_reconstruction_baseline` / `not_loaded`), validation
+  strategy read from **the bundle's own split record**, whether history is
+  persisted, and the password mode — the four facts that decide whether a number
+  on screen can be trusted. Before a bundle is loaded it says `not_loaded`
+  instead of quoting a default: `bundle_split` now overrides this session's
+  `split_metadata`, which would otherwise label a temporal bundle "random".
+* **New: CSV export of assessment history**, with the raw confidence and the
+  input features that produced each prediction — the table shows one decimal and
+  a truncated timestamp.
+* **Dark theme** in both `.streamlit/config.toml` files (root and app directory),
+  with pinned colours; a test asserts both request `base = "dark"` and that they
+  cannot drift.
+* **One version number**: the sidebar no longer advertises "Version 6.0" /
+  "Version 5.0"; it prints `PROJECT_VERSION`. Its feature caption no longer
+  claims "CPI-based target generation" — the shipped model predicts an exam band,
+  and CPI is a demoted rule-reconstruction baseline.
+* 61 new tests — `test_auth_credentials.py` (34), `test_ui_regressions.py` (10),
+  `test_history_export.py` (11), `test_mode_selection_ui.py` (6); **172 total**
+  (111 before), 43 s. The UI ones drive the real `app.py` through
+  `streamlit.testing`, so the crash paths are exercised, not just described.
+
+---
+
 ## [3.3.3] — 2026-11-05 — "Streamlit Community Cloud"
 
 Makes the hosted Streamlit path work. Three things were missing, and each

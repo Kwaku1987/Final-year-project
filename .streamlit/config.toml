@@ -34,6 +34,20 @@ gatherUsageStats = false
 showErrorDetails = false
 toolbarMode = "minimal"
 
+# Dark by default. The app is used in labs and evening study, and the
+# tables/explanations are read for long stretches; a light default was
+# hard on the eyes and washed out the confidence colours.
+#
+# Colours are pinned rather than left to Streamlit's defaults so the
+# contrast between the Low/Average/High status chips stays legible:
+#   background  #0e1117   (page)
+#   secondary   #161b22   (cards, sidebar)
+#   text        #e6edf3   (AAA on background)
+#   primary     #4f8cff   (buttons, links, focus rings)
 [theme]
-base = "light"
-primaryColor = "#1f6feb"
+base = "dark"
+primaryColor = "#4f8cff"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#161b22"
+textColor = "#e6edf3"
+font = "sans serif"

@@ -10,7 +10,7 @@ role-based modes for an administrator (train) and a lecturer (assess), model
 persistence, per-student SHAP explanations, risk/intervention advice, and
 PDF/Excel reporting.
 
-![status](https://img.shields.io/badge/tests-100%20passing-brightgreen)
+![status](https://img.shields.io/badge/tests-172%20passing-brightgreen)
 ![python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 
@@ -62,7 +62,9 @@ Then:
   immediately with the bundled model (no dataset needed).
 * **Administrator / Training Mode** → password (`change-me-admin` by default; set
   `SPAS_ADMIN_PASSWORD_HASH`, see [`docs/DATA_PROTECTION.md`](Code6/student_performance_app/docs/DATA_PROTECTION.md))
-  → upload a dataset → train → save.
+  → upload a dataset → train → save. The secret may be a SHA-256 digest **or**
+  the plaintext password; `python -m utils.auth check` says which one the app
+  found, and `python -m utils.auth verify "your-password"` tests it.
 
 > ⚠️ **The version pins matter.** `models/best_model.pkl` was written by
 > scikit-learn 1.9.x; with an older scikit-learn it fails to load with
@@ -92,6 +94,7 @@ python scripts/train_model.py --data data/synthetic_cohort.csv \
 | **Reports** | PDF student report, Excel batch report |
 | **Governance** | Password-gated Training Mode, single-source config, model card, version guard on load, MIT licence |
 | **Persistence** | Assessments and an audit trail of every privileged action (`admin_unlocked`, `dataset_loaded`, `model_saved`, …) survive restarts, in SQLite |
+| **Deployment status** | Sidebar panel states the loaded model's role and validation strategy, whether history is stored, and whether Training Mode is really password-protected |
 | **Validation design** | Temporal split (train earlier semesters, test the latest) alongside the random split, with the change reported per model |
 | **Fairness** | Hold-out performance disaggregated by gender, programme and entry qualification; small subgroups flagged, never averaged away |
 
@@ -135,7 +138,7 @@ Code6/student_performance_app/
 ├── scripts/                      synthetic data generator, CLI trainer,
 │                                  results-table generator, preflight,
 │                                  smoke test
-├── tests/                        100 pytest tests
+├── tests/                        172 pytest tests
 └── docs/                         METHODOLOGY · MODEL_CARD · DATA_PROTECTION
 ```
 
@@ -148,7 +151,7 @@ object, with **one shared config** so no component invents its own schema.
 ## Tests
 
 ```bash
-python -m pytest tests -q          # 100 passed, ~42 s
+python -m pytest tests -q          # 172 passed, ~43 s
 ```
 
 The suite encodes the fixes: the label source is never a predictor, labels are
@@ -157,11 +160,16 @@ calibration quality (Brier, ECE), search and calibration never touch the test
 fold,
 interventions always state a reason, bundles round-trip their contract, a
 version-mismatched bundle fails with a readable message instead of a traceback,
-and — since 3.2 — an assessment survives a store restart and the audit trail
+an assessment survives a store restart, the audit trail
 records every privileged action. Since 3.3 the suite also pins the two
 claims that are easiest to fake: a temporal split may not let a semester appear
 on both sides, and a fairness table may not average away a subgroup too small to
-support a conclusion.
+support a conclusion. Since 3.3.4 it also pins the deployed-app fixes: nothing
+assigns to the read-only `application_mode` property, no sidebar helper calls
+itself, a pasted credential in any of its common shapes unlocks Training Mode,
+the attempt limit can be cleared, the committed bundle still describes itself as
+a production model validated temporally, and both Streamlit configs ask for the
+dark theme.
 
 ---
 

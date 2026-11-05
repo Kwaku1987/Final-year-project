@@ -38,6 +38,8 @@ from typing import Optional
 
 import streamlit as st
 
+from backend.config import PROJECT_VERSION
+
 from dashboard.application_state import ApplicationState
 
 
@@ -104,7 +106,10 @@ class Sidebar:
 
     APP_TITLE = "🎓 Student Performance"
 
-    APP_VERSION = "Version 6.0"
+    # One version, taken from the backend config, so the sidebar can
+    # never advertise a different release from the one CHANGELOG.md and
+    # the deployment-status panel describe.
+    APP_VERSION = f"Version {PROJECT_VERSION}"
 
     # Controller captured by render(), so the helper methods
     # below always read the same state the pages read.
@@ -165,6 +170,10 @@ class Sidebar:
 
             st.divider()
 
+            cls._deployment_status()
+
+            st.divider()
+
             cls._project_info()
 
         return page
@@ -180,7 +189,10 @@ class Sidebar:
         if cls._controller is not None:
             return bool(cls._controller.has_dataset)
 
-        return cls._has_dataset()
+        # No controller: nothing has been loaded. (This used to call
+        # itself, so the first click on a fresh session ended in
+        # RecursionError instead of "not yet".)
+        return False
 
     @classmethod
     def _has_trained_models(cls) -> bool:
@@ -188,7 +200,7 @@ class Sidebar:
         if cls._controller is not None:
             return bool(cls._controller.has_trained_models)
 
-        return cls._has_trained_models()
+        return False
 
     @classmethod
     def _has_saved_model(cls) -> bool:
@@ -196,7 +208,7 @@ class Sidebar:
         if cls._controller is not None:
             return bool(cls._controller.has_saved_model)
 
-        return cls._has_saved_model()
+        return False
 
     @classmethod
     def _assessment_history(cls) -> list:
@@ -206,7 +218,7 @@ class Sidebar:
                 cls._controller.get_assessment_history()
             )
 
-        return cls._assessment_history()
+        return []
 
     @classmethod
     def _is_ready_for_prediction(cls) -> bool:
@@ -216,7 +228,7 @@ class Sidebar:
                 cls._controller.is_ready_for_prediction
             )
 
-        return cls._is_ready_for_prediction()
+        return False
 
     @classmethod
     def _is_ready_for_interpretation(cls) -> bool:
@@ -228,7 +240,7 @@ class Sidebar:
                 is not None
             )
 
-        return cls._is_ready_for_interpretation()
+        return False
 
     @classmethod
     def _is_ready_for_reports(cls) -> bool:
@@ -238,7 +250,7 @@ class Sidebar:
                 cls._controller.get_report() is not None
             )
 
-        return cls._is_ready_for_reports()
+        return False
 
     @classmethod
     def _switch_mode(cls) -> None:
@@ -246,11 +258,11 @@ class Sidebar:
 
         if cls._controller is not None:
 
-            cls._controller.application_mode = None
-
-            cls._controller.state.clear_application_mode()
-
-        cls._switch_mode()
+            # application_mode is a read-only property; the old
+            # assignment raised AttributeError in the deployed app,
+            # which is what "Switch Mode" did every time. The
+            # controller clears the state itself.
+            cls._controller.clear_mode()
 
         try:
 
@@ -266,8 +278,6 @@ class Sidebar:
 
         if cls._controller is not None:
             cls._controller.reset()
-
-        cls._reset()
 
     # =======================================================
     # Mode Badge / Switch
@@ -584,6 +594,122 @@ class Sidebar:
     # =======================================================
 
     @classmethod
+    def _deployment_status(cls) -> None:
+        """
+        What this deployment is actually running.
+
+        Four facts decide whether a number on screen may be trusted:
+        which model is loaded, how it was validated, whether history is
+        being stored, and whether Training Mode is protected by a real
+        password. They are one expander away instead of three pages.
+        """
+
+        try:
+
+            from utils.auth import credential_status
+
+            status = credential_status()
+
+        except Exception:  # pragma: no cover - defensive
+
+            status = {"kind": "unknown", "configured": False}
+
+        with st.expander("🔍 Deployment status", expanded=False):
+
+            version = PROJECT_VERSION
+
+            st.caption(f"**Version** {version}")
+
+            if cls._controller is not None:
+
+                role = cls._controller.model_bundle_role
+
+                strategy = cls._controller.model_validation_strategy
+
+                persistent = cls._controller.history_is_persistent
+
+            else:  # pragma: no cover - defensive
+
+                role, strategy, persistent = (
+                    "not_loaded",
+                    "unknown",
+                    False,
+                )
+
+            icons = {
+                "production": "✅",
+                "rule_reconstruction_baseline": "⚠️",
+                "not_loaded": "⬜",
+                "unknown": "❔",
+            }
+
+            st.caption(
+                f"{icons.get(role, '❔')} **Model role** `{role}`"
+            )
+
+            if role == "not_loaded":
+
+                st.caption(
+                    "No model is in memory yet. Enter Assessment Mode "
+                    "(or train one) and this panel describes what is "
+                    "actually loaded."
+                )
+
+            if role == "rule_reconstruction_baseline":
+
+                st.caption(
+                    "Scores from this bundle measure rule reconstruction, "
+                    "not prediction."
+                )
+
+            strategy_icons = {
+                "temporal": "✅",
+                "random": "⚠️",
+                "unknown": "❔",
+            }
+
+            st.caption(
+                f"{strategy_icons.get(strategy, '❔')} **Validation** "
+                f"`{strategy}`"
+            )
+
+            if strategy == "random":
+
+                st.caption(
+                    "Random split of one cohort — it measures fit, not "
+                    "next-semester transfer."
+                )
+
+            st.caption(
+                f"{'✅' if persistent else '⚠️'} **History** "
+                + (
+                    "stored (SQLite)"
+                    if persistent
+                    else "session-only — nothing survives a restart"
+                )
+            )
+
+            kind = status.get("kind", "unknown")
+
+            credential_icons = {
+                "hash": "✅",
+                "plaintext": "⚠️",
+                "default": "❌",
+            }
+
+            st.caption(
+                f"{credential_icons.get(kind, '❔')} **Training Mode "
+                f"password** `{kind}`"
+            )
+
+            if kind == "default":
+
+                st.caption(
+                    "The development password is active. Do not share "
+                    "this URL."
+                )
+
+    @classmethod
     def _project_info(cls) -> None:
         """
         Display a compact project information section.
@@ -601,15 +727,15 @@ class Sidebar:
             )
 
             st.caption(
-                "Features include dataset validation, CPI-based "
-                "target generation, model comparison, student "
-                "prediction, explainable AI, recommendations, "
-                "and report generation."
+                "Features include dataset validation, target "
+                "definition from exam performance, model "
+                "comparison, student prediction, explainable AI, "
+                "recommendations, and report generation."
             )
 
             st.caption(
                 "Student Performance Assessment System "
-                "• Version 5.0"
+                f"• v{PROJECT_VERSION}"
             )
 
     # =======================================================

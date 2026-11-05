@@ -41,4 +41,11 @@ toolbarMode = "minimal"
 level = "info"
 
 [theme]
-base = "light"
+# Dark by default -- keep identical to the repository-root config so the
+# hosted and self-hosted deployments look the same.
+base = "dark"
+primaryColor = "#4f8cff"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#161b22"
+textColor = "#e6edf3"
+font = "sans serif"

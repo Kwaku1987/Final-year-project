@@ -20,8 +20,9 @@ from dashboard.dashboard_controller import DashboardController
 
 from utils.auth import (
     attempts_remaining,
+    credential_status,
     is_admin_unlocked,
-    is_using_default_password,
+    reset_attempts,
     verify_admin_password,
 )
 
@@ -56,12 +57,32 @@ def render_mode_selection_page(
             "lecturers to use."
         )
 
-        if is_using_default_password():
+        status = credential_status()
+
+        if status["kind"] == "default":
+
+            st.warning(
+                "🔐 **No administrator password is configured.** The "
+                "documented development password (`change-me-admin`) is "
+                "active, which means anyone who finds this URL can enter "
+                "Training Mode. Set `SPAS_ADMIN_PASSWORD_HASH` in your "
+                "host's secrets."
+            )
+
+        elif status["kind"] == "plaintext":
+
+            st.info(
+                "🔑 A password is configured (plaintext, "
+                f"{status['length']} characters). It works, but store the "
+                "**hash** instead: "
+                "`python -m utils.auth hash \"your-password\"`."
+            )
+
+        else:
 
             st.caption(
-                "🔐 Development password in use "
-                "(`change-me-admin`). Set "
-                "`SPAS_ADMIN_PASSWORD_HASH` before deploying."
+                "🔒 Password configured as a SHA-256 hash "
+                f"({status['length']} characters)."
             )
 
         password = st.text_input(
@@ -77,9 +98,33 @@ def render_mode_selection_page(
         if attempts_remaining() <= 0:
 
             st.error(
-                "Too many failed attempts in this session. "
-                "Reload the page to try again."
+                "Too many failed attempts in this session — the "
+                "password form is paused."
             )
+
+            if st.button(
+                "🔁 Reset attempts and try again",
+                use_container_width=True,
+            ):
+
+                reset_attempts()
+
+                st.rerun()
+
+            st.caption(
+                "The attempt counter is a guard against typos, not a "
+                "security boundary; the password itself is. Fix the "
+                "secret first — expand *Still failing? Diagnose it* "
+                "below."
+            )
+
+            with st.expander("Still failing? Diagnose it"):
+
+                st.markdown(
+                    "Run these in the app's own environment (on "
+                    "Community Cloud: **Manage app → Terminal**):\n\n"
+                    "```bash\npython -m utils.auth check\n```"
+                )
 
         elif st.button(
             "Enter Training Mode",
@@ -99,10 +144,65 @@ def render_mode_selection_page(
 
             else:
 
-                st.error(
-                    "Incorrect password. "
-                    f"{attempts_remaining()} attempt(s) left."
-                )
+                # A bare "wrong password" hid three different problems:
+                # no credential configured, a credential in an
+                # unexpected format, and a genuine typo. Say which.
+                if attempts_remaining() <= 0:
+
+                    st.error(
+                        "Too many failed attempts. Reload the page to "
+                        "try again."
+                    )
+
+                elif status["kind"] == "default":
+
+                    st.error(
+                        "Incorrect password. No password has been "
+                        "configured for this deployment, so the "
+                        "development password (`change-me-admin`) is in "
+                        f"use. {attempts_remaining()} attempt(s) left."
+                    )
+
+                else:
+
+                    st.error(
+                        "Incorrect password — the value you typed does "
+                        "not match the credential configured in "
+                        f"`{status['variable']}` ({status['kind']}, "
+                        f"{status['length']} characters). "
+                        f"{attempts_remaining()} attempt(s) left."
+                    )
+
+                with st.expander("Still failing? Diagnose it"):
+
+                    st.markdown(
+                        "The credential is read from the host's "
+                        "environment or secrets, not from this form.\n\n"
+                        "1. **Run the checker on the same host:**\n"
+                        "   ```bash\n"
+                        "   python -m utils.auth check\n"
+                        "   ```\n"
+                        "   It prints whether a credential is set, "
+                        "whether it is a hash or a plaintext password, "
+                        "and never prints the secret itself.\n"
+                        "2. **Test a password against it:**\n"
+                        "   ```bash\n"
+                        "   python -m utils.auth verify \"your-password\"\n"
+                        "   ```\n"
+                        "3. **Common causes:**\n"
+                        "   * the **password** was pasted instead of its "
+                        "hash — both are accepted, but the password must "
+                        "be the exact one you type here;\n"
+                        "   * the secret was saved with the quotes or "
+                        "the `SPAS_ADMIN_PASSWORD_HASH =` prefix (both "
+                        "are now stripped automatically);\n"
+                        "   * the value was changed but the app has not "
+                        "rebooted — use *Manage app → Reboot*;\n"
+                        "   * the secret is in *Variables* instead of "
+                        "*Secrets* — Community Cloud only guarantees "
+                        "`st.secrets`; this app bridges those into the "
+                        "environment at startup."
+                    )
 
     with col2:
 

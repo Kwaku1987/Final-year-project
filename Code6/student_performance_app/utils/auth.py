@@ -46,6 +46,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 
 from typing import Optional
 
@@ -76,12 +77,100 @@ def hash_password(password: str) -> str:
     ).hexdigest()
 
 
-def configured_hash() -> Optional[str]:
-    """The admin password hash from the environment, if any."""
+_HEX_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
-    value = os.environ.get(ADMIN_PASSWORD_ENV, "").strip()
+
+def normalize_credential(value: Optional[str]) -> str:
+    """
+    Turn whatever was pasted into the Secrets box into a usable value.
+
+    People paste things that are *nearly* right, and every one of these
+    variants used to be rejected as "wrong password" with no clue why:
+
+        SPAS_ADMIN_PASSWORD_HASH = "abc..."   (the whole TOML line)
+        "abc..."                              (the surrounding quotes)
+        abc...\n                              (a trailing newline)
+        sha256:abc...                         (an OpenSSL-style prefix)
+        ABC...                                (uppercase hex)
+
+    All of those mean the same credential. Normalising here is not a
+    security relaxation: it changes nothing about *what* is compared,
+    only strips packaging that is never part of a secret.
+    """
+
+    if value is None:
+
+        return ""
+
+    text = str(value).strip().strip('"').strip("'").strip()
+
+    # A pasted TOML/env line, e.g. SPAS_ADMIN_PASSWORD_HASH = "abc"
+    if "=" in text:
+
+        head, _, tail = text.partition("=")
+
+        if head.strip().upper().startswith("SPAS_"):
+
+            text = tail.strip().strip('"').strip("'").strip()
+
+    if text.lower().startswith("sha256:"):
+
+        text = text.split(":", 1)[1].strip()
+
+    # Hex digests are case-insensitive; normalise so a capitalised
+    # copy-and-paste still matches.
+    if _HEX_DIGEST.match(text.lower()):
+
+        return text.lower()
+
+    return text
+
+
+def configured_hash() -> Optional[str]:
+    """
+    The configured credential, or None when nothing is set.
+
+    Despite the name this returns whatever was supplied: a SHA-256
+    digest when the value is 64 hex characters, otherwise the plain
+    password. ``credential_kind()`` says which.
+    """
+
+    value = normalize_credential(
+        os.environ.get(ADMIN_PASSWORD_ENV, "")
+    )
 
     return value or None
+
+
+def credential_kind() -> str:
+    """
+    "hash" | "plaintext" | "default".
+
+    "plaintext" is not an error — it works — but it means the secret is
+    stored readable, which is worth saying out loud in the UI.
+    """
+
+    value = configured_hash()
+
+    if value is None:
+
+        return "default"
+
+    return "hash" if _HEX_DIGEST.match(value) else "plaintext"
+
+
+def credential_status() -> dict:
+    """Non-secret description of the configured credential, for the UI."""
+
+    value = configured_hash()
+
+    return {
+        "configured": value is not None,
+        "kind": credential_kind(),
+        "length": len(value) if value else 0,
+        "using_default": value is None,
+        "variable": ADMIN_PASSWORD_ENV,
+    }
 
 
 def is_using_default_password() -> bool:
@@ -120,6 +209,23 @@ def attempts_remaining() -> int:
     return max(AUTH_MAX_ATTEMPTS - _attempts(), 0)
 
 
+def reset_attempts() -> None:
+    """
+    Clear the failed-attempt counter for this session.
+
+    The counter lives in ``st.session_state``, which survives a browser
+    reload -- so without this, five typos locked Training Mode for the
+    rest of the session with no way back. The counter is a courtesy
+    guard against fat-fingering, not a security boundary: an attacker
+    who can reach this page can also start a fresh session. The real
+    boundary is the password itself.
+    """
+
+    st.session_state[ATTEMPTS_KEY] = 0
+
+    logger.info("Admin unlock attempt counter reset.")
+
+
 # ============================================================
 # VERIFICATION
 # ============================================================
@@ -143,7 +249,7 @@ def verify_admin_password(password: str) -> bool:
 
     if expected is None:
 
-        expected = hash_password(ADMIN_PASSWORD_DEFAULT)
+        expected = ADMIN_PASSWORD_DEFAULT
 
         logger.warning(
             "No %s configured -- falling back to the documented "
@@ -151,9 +257,27 @@ def verify_admin_password(password: str) -> bool:
             ADMIN_PASSWORD_ENV,
         )
 
-    provided = hash_password(password or "")
+    provided = password or ""
 
-    if hmac.compare_digest(provided, expected):
+    # Compare digests in both branches so the comparison is constant
+    # time whether the stored credential is a hash or a plaintext
+    # password (a plaintext secret compared directly would leak its
+    # length and prefix through timing).
+    if _HEX_DIGEST.match(expected):
+
+        matched = hmac.compare_digest(
+            hash_password(provided),
+            expected,
+        )
+
+    else:
+
+        matched = hmac.compare_digest(
+            hash_password(provided),
+            hash_password(expected),
+        )
+
+    if matched:
 
         st.session_state[SESSION_KEY] = True
 
@@ -181,6 +305,14 @@ def verify_admin_password(password: str) -> bool:
 # ============================================================
 
 def _main(argv: list[str]) -> int:
+    """
+    CLI entry point.
+
+    ``argv`` is the raw ``sys.argv``, so ``python -m utils.auth check``
+    arrives as a *two*-element list -- the argument-count guards are per
+    subcommand, not global (a single global ``>= 3`` silently turned
+    ``check`` into a usage message, which is how this was found).
+    """
 
     if len(argv) >= 3 and argv[1] == "hash":
 
@@ -188,10 +320,64 @@ def _main(argv: list[str]) -> int:
 
         return 0
 
+    if len(argv) >= 2 and argv[1] == "check":
+
+        # Diagnose a deployment without printing the secret.
+        status = credential_status()
+
+        print(f"{ADMIN_PASSWORD_ENV}: {status['kind']} ({status['length']} chars)")
+
+        if status["kind"] == "hash":
+
+            verdict = "OK — SHA-256 hash configured"
+
+        elif status["kind"] == "plaintext":
+
+            verdict = (
+                "OK — plaintext password configured. It works, but store "
+                "the hash instead: python -m utils.auth hash \"<password>\""
+            )
+
+        else:
+
+            verdict = (
+                "NOT CONFIGURED — the development password is active. "
+                "Set the variable before deploying."
+            )
+
+        print(verdict)
+
+        print(
+            f"\nTo verify a password against it: "
+            f"python -m utils.auth verify <password>"
+        )
+
+        return 0 if status["configured"] else 1
+
+    if len(argv) >= 3 and argv[1] == "verify":
+
+        expected = configured_hash() or ADMIN_PASSWORD_DEFAULT
+
+        provided = argv[2]
+
+        if _HEX_DIGEST.match(expected):
+
+            ok = hash_password(provided) == expected
+
+        else:
+
+            ok = provided == expected
+
+        print("match" if ok else "no match")
+
+        return 0 if ok else 1
+
     print(
         "Usage:\n"
-        "  python -m utils.auth hash \"<password>\"\n\n"
-        "Then export the result:\n"
+        "  python -m utils.auth hash \"<password>\"    # print the SHA-256 digest\n"
+        "  python -m utils.auth check                 # diagnose the configured secret\n"
+        "  python -m utils.auth verify <password>     # test a password non-interactively\n\n"
+        "Then set the credential:\n"
         f"  export {ADMIN_PASSWORD_ENV}=<hash>"
     )
 

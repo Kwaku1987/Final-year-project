@@ -26,11 +26,20 @@ export SPAS_ADMIN_PASSWORD_HASH="<the printed 64-char digest>"
 streamlit run app.py
 ```
 
+A plaintext password is also accepted in `SPAS_ADMIN_PASSWORD_HASH` (the
+variable name is historical), so a deployment cannot be locked out by someone
+storing the password instead of its digest. Both branches compare digests, so
+the check is constant-time either way. `python -m utils.auth check` reports
+which form the running app found, and never prints the secret.
+
 If `SPAS_ADMIN_PASSWORD_HASH` is unset the app falls back to the documented
 development password `change-me-admin` and says so on screen. **Never deploy
 with the fallback.**
 
-Five failed attempts per session lock Training Mode until the page is reloaded.
+Five failed attempts pause the password form for that session. The counter lives
+in `st.session_state`, which survives a page reload, so a "Reset attempts and try
+again" button clears it; the counter is a guard against typos rather than a
+security boundary (an attacker can start a new session), and the password is.
 Comparison is constant-time (`hmac.compare_digest`).
 
 ---

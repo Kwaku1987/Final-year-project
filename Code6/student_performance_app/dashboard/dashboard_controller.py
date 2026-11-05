@@ -208,6 +208,74 @@ class DashboardController:
     # ========================================================
 
     @property
+    def model_is_loaded(self) -> bool:
+        """Whether a trained or saved model is in memory right now."""
+
+        framework = getattr(self, "framework", None)
+
+        if framework is None:
+
+            return False
+
+        if getattr(framework, "trained_models", None):
+
+            return True
+
+        return getattr(framework, "best_model", None) is not None
+
+    # --------------------------------------------------------
+
+    @property
+    def model_bundle_role(self) -> str:
+        """
+        "production" | "rule_reconstruction_baseline" | "not_loaded".
+
+        Surfaced in the sidebar so a demo can never unknowingly quote a
+        rule-reconstruction baseline as a predictive model. "not_loaded"
+        is reported as itself rather than guessed: before Assessment
+        Mode runs, no model has been read from disk, and claiming a role
+        would be worse than saying nothing.
+        """
+
+        if not self.model_is_loaded:
+
+            return "not_loaded"
+
+        return str(
+            getattr(self.framework, "bundle_role", "unknown")
+            or "unknown"
+        )
+
+    # --------------------------------------------------------
+
+    @property
+    def model_validation_strategy(self) -> str:
+        """
+        How the loaded model's metrics were produced.
+
+        The bundle's own ``split`` record wins over this session's
+        ``split_metadata``: after loading ``best_model.pkl`` the session
+        has never split anything, so the default ("random") would
+        mislabel a temporal bundle. Falls back to the session metadata so
+        a just-trained model is still described correctly.
+        """
+
+        framework = getattr(self, "framework", None)
+
+        for metadata in (
+            getattr(framework, "bundle_split", None),
+            getattr(framework, "split_metadata", None),
+        ):
+
+            if isinstance(metadata, dict) and metadata.get("strategy"):
+
+                return str(metadata["strategy"])
+
+        return "unknown"
+
+    # --------------------------------------------------------
+
+    @property
     def history_is_persistent(self) -> bool:
         """Whether assessments survive a restart."""
 
@@ -362,6 +430,24 @@ class DashboardController:
         self.state.set_application_mode(mode)
 
         logger.info("Application mode set to: %s", mode)
+
+    # --------------------------------------------------------
+
+    def clear_mode(self) -> None:
+        """
+        Return to the mode-selection screen.
+
+        Exists because ``application_mode`` is a read-only property:
+        ``controller.application_mode = None`` raises
+        ``AttributeError: property ... has no setter`` at runtime, which
+        is exactly what "Switch Mode" used to do in the deployed app.
+        Going through a method keeps the state the single owner of the
+        value.
+        """
+
+        self.state.clear_application_mode()
+
+        logger.info("Application mode cleared (back to selection).")
 
     # =======================================================
     # LOAD DATASET

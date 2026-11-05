@@ -169,7 +169,9 @@ def main() -> None:
         and not is_admin_unlocked()
     ):
 
-        controller.application_mode = None
+        # application_mode is read-only; assigning to it raised
+        # AttributeError at runtime. The controller owns the state.
+        controller.clear_mode()
 
     # Mode-selection gate: nothing else renders until the user
     # has chosen Administrator (Training Mode) or Lecturer

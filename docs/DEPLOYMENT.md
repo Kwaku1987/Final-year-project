@@ -89,6 +89,9 @@ pip install -r requirements.txt
 python -m utils.auth hash "your-password"      # prints a SHA-256 digest
 export SPAS_ADMIN_PASSWORD_HASH=<digest pasted here>
 
+python -m utils.auth check                     # is a credential configured?
+python -m utils.auth verify "your-password"     # does it match? (exit 0 = yes)
+
 python scripts/preflight.py                    # expect "READY WITH WARNINGS"
 streamlit run app.py                           # http://localhost:8501
 ```
@@ -217,8 +220,23 @@ all three are now committed.
      `shap==0.54.1` both require ≥ 3.12 and the build fails on 3.11).
    * **Secrets**: paste the block from
      `Code6/student_performance_app/.streamlit/secrets.toml.example`, with
-     `SPAS_ADMIN_PASSWORD_HASH` filled in from
-     `python -m utils.auth hash "your-password"`.
+     `SPAS_ADMIN_PASSWORD_HASH` filled in. Either form works:
+
+     ```toml
+     SPAS_ADMIN_PASSWORD_HASH = "5e884898da28…1542d8"   # sha256 of the password
+     ```
+
+     or, if you would rather type your password directly,
+
+     ```toml
+     SPAS_ADMIN_PASSWORD_HASH = "your-password"
+     ```
+
+     The variable keeps its historical name, but the value is accepted as a
+     64-character SHA-256 digest **or** a plaintext password: the app detects
+     which it has and compares digests either way. A hash is the better choice
+     (the secret stays unreadable in the dashboard); the mode-selection page
+     says which one is active, and never prints the value.
 5. *Deploy*. The first build installs the pinned dependencies and takes several
    minutes.
 6. Verify: `python scripts/smoke_test.py --url https://<your-app>.streamlit.app`
@@ -236,6 +254,43 @@ every reboot and redeploy. So:
   one at deploy time is not a deployment step.
 * If you need a durable audit trail, that is the compose stack (§4.5) or a small
   VPS (§6), where `/data/spas.db` sits on a real volume.
+
+**"Training Mode says my password is wrong"**
+
+Three different problems used to produce that one message, so the page now says
+which one you have, and the failure is diagnosable from the app itself:
+
+1. Boot the app and read the caption on the mode-selection page. It states
+   either *"Password configured as a SHA-256 hash (64 characters)"*, *"A password
+   is configured (plaintext, N characters)"*, or a red *"No administrator
+   password is configured"* warning. If it says *no password configured*, the
+   secret is not reaching the app at all — see step 3.
+2. Run the checker where the app runs (**Manage app → Terminal** on Cloud):
+
+   ```bash
+   python -m utils.auth check                 # hash | plaintext | default
+   python -m utils.auth verify "your-password" # match / no match
+   ```
+
+   `check` never prints the secret. If it reports `default`, nothing is
+   configured; if it reports a credential but `verify` says *no match*, the
+   value you are typing is not the value you stored.
+3. Common causes, all of which the app now tolerates or explains:
+
+   * the **whole line** was pasted (`SPAS_ADMIN_PASSWORD_HASH = "abc…"`) — the
+     prefix and quotes are stripped automatically;
+   * a trailing newline, `'`/`"` around the value, a `sha256:` prefix, or
+     uppercase hex — all normalised before comparison;
+   * the secret was saved as a **Variable** instead of a **Secret** — Community
+     Cloud only guarantees `st.secrets`; `utils/runtime_env.py` bridges secrets
+     into the environment at startup, so a Secret is what you want;
+   * the secret was changed but the app was not restarted — use *Manage app →
+     Reboot*.
+4. Five failed attempts pause the password form for that session. Earlier this
+   was permanent (the counter lives in session state, which survives the "reload
+   the page" the UI suggested); there is now a **"Reset attempts and try again"**
+   button. The counter is a guard against typos, not a security boundary — the
+   password is.
 
 **What to expect on the free tier**
 
