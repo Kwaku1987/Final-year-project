@@ -195,7 +195,62 @@ deploy, restart and spin-down.
 Anything that needs a disk, a shell or steady CPU (the audit trail, retraining,
 backups) belongs on the compose stack in §4.4 or a small VPS (§6).
 
-### 4.4 Compose (the normal path)
+### 4.4 Streamlit Community Cloud
+
+The hosted Streamlit path: free, no card, TLS and a public URL handled for you.
+It needs three things from the repository that a Docker deployment does not, and
+all three are now committed.
+
+| What Community Cloud looks for | Where it is | Why it is needed |
+|---|---|---|
+| `requirements.txt` in the **repository root** | [`requirements.txt`](../requirements.txt) → `-r Code6/student_performance_app/requirements.txt` | Cloud installs from the root and does **not** search subdirectories. Without it the app deploys with no pins and dies on `import xgboost`. |
+| `.streamlit/config.toml` in the **repository root** | [`.streamlit/config.toml`](../.streamlit/config.toml) | Cloud launches from the repo root, so the app-directory copy is never read: you would get Streamlit's defaults — tracebacks shown to users, no upload cap. |
+| `st.secrets` → `os.environ` bridge | `utils/runtime_env.py`, called first in `app.py` | Cloud exposes settings as secrets, not environment variables. Without the bridge the app starts with no password hash and silently falls back to the development password. |
+
+**Deploy**
+
+1. share.streamlit.io → *Create app* → *Deploy a public app from GitHub*.
+2. Repository `Kwaku1987/Final-year-project`, branch `main`.
+3. **Main file path**: `Code6/student_performance_app/app.py`
+4. *Advanced settings*:
+   * **Python version: 3.12** (not optional — `xgboost==3.4.1` and
+     `shap==0.54.1` both require ≥ 3.12 and the build fails on 3.11).
+   * **Secrets**: paste the block from
+     `Code6/student_performance_app/.streamlit/secrets.toml.example`, with
+     `SPAS_ADMIN_PASSWORD_HASH` filled in from
+     `python -m utils.auth hash "your-password"`.
+5. *Deploy*. The first build installs the pinned dependencies and takes several
+   minutes.
+6. Verify: `python scripts/smoke_test.py --url https://<your-app>.streamlit.app`
+
+**"It asked for a database"** — there isn't one to give it. This app stores
+assessments and the audit trail in a **local SQLite file**, not in a database
+server, and Community Cloud has no persistent disk: the filesystem is rebuilt on
+every reboot and redeploy. So:
+
+* Set `SPAS_DB_ENABLED = "0"` (the template does). The Assessment page then says
+  history is session-only, which is true, instead of pretending to save rows that
+  will vanish.
+* Leave any database/connection field empty. Pointing it at a Postgres add-on
+  would not help: there is no Postgres backend in this codebase, and inventing
+  one at deploy time is not a deployment step.
+* If you need a durable audit trail, that is the compose stack (§4.5) or a small
+  VPS (§6), where `/data/spas.db` sits on a real volume.
+
+**What to expect on the free tier**
+
+* **Memory: 690 MB floor, ~2.7 GB ceiling** (Streamlit's published figures). This
+  app idles at ~400 MB with the bundle loaded, so Assessment Mode is comfortable
+  and a training run fits — but it is slow, because the free instances are
+  small. Train locally and commit the bundle if the demo matters.
+* **Sleeps after 12 quiet hours**; the next visitor sees a "waking up" page.
+* **One private app** at a time, **no custom domain**, and the URL is public.
+* **Assessment Mode has no password by design.** On a public URL that means
+  anyone with the link can type student names and scores into your app — which
+  makes it personal data on your host. Use invented names in the demo, or keep
+  Training Mode as the only gate and don't advertise the link.
+
+### 4.5 Compose (the normal path)
 
 ```bash
 cp .env.example .env

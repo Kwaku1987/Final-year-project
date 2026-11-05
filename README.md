@@ -196,7 +196,11 @@ and restore of the database, retraining, rollback, Act 843 duties,
 troubleshooting): **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
 
 The image honours `$PORT`, so it runs unmodified on Render, Cloud Run, Railway or
-Fly as well as on compose. A free-tier Render blueprint is included
+Fly as well as on compose. For **Streamlit Community Cloud** the repository root
+now carries the `requirements.txt` and `.streamlit/config.toml` that Cloud reads
+(it does not look inside subdirectories), and `utils/runtime_env.py` maps
+`st.secrets` into the environment so the password hash and DB settings actually
+take effect. A free-tier Render blueprint is included
 ([`render.yaml`](render.yaml)) — good for a public Assessment-Mode demo; training
 needs ≥ 1 GB of RAM and belongs on the compose stack or a small VPS.
 

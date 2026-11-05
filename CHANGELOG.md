@@ -6,6 +6,41 @@ All notable changes to this project. Format loosely follows
 
 ---
 
+## [3.3.3] — 2026-11-05 — "Streamlit Community Cloud"
+
+Makes the hosted Streamlit path work. Three things were missing, and each
+fails silently rather than loudly, which is why they are worth listing.
+
+* **`utils/runtime_env.py`** — a `st.secrets` → `os.environ` bridge, called
+  before anything reads config. Community Cloud configures apps through secrets,
+  not environment variables, so without this the deployed app started with no
+  password hash and fell back to the documented development password: healthy
+  looking, Training Mode wide open. Rules in the bridge: a real environment
+  variable always wins (so Docker/Render are unaffected), only known keys are
+  copied, TOML booleans become `"1"`/`"0"` (the codebase compares strings, so
+  `SPAS_TUNING = true` was silently disabling search), empty values are skipped,
+  and missing secrets are a no-op. Verified in a simulated Cloud run: hash from
+  secrets → `is_using_default_password()` False, `SPAS_TUNING = true` →
+  `TUNING["enabled"] is True`, `SPAS_DB_ENABLED = "0"` → session-only history.
+* **Root `requirements.txt`** — `-r Code6/student_performance_app/requirements.txt`.
+  Cloud installs from the repository root and does not search subdirectories; the
+  app would have deployed unpinned and failed on `import xgboost`.
+* **Root `.streamlit/config.toml`** — Cloud launches from the repo root, so the
+  app-directory config was never read and the deployed app fell back to
+  Streamlit's defaults (tracebacks visible to users, no upload cap).
+* **`.streamlit/secrets.toml.example`** — the exact TOML to paste into the
+  Secrets box, with the reason for each value. A test asserts the template lists
+  every key the bridge accepts, and one phantom key (`SPAS_MAX_UPLOAD_MB`) was
+  removed because nothing reads it — the upload cap lives in `config.toml`.
+* **`docs/DEPLOYMENT.md` §4.4** — the wizard values (main file path, Python
+  3.12, secrets), the memory envelope (690 MB floor / ~2.7 GB ceiling against a
+  ~400 MB idle footprint), and an explicit answer to "it is asking for a
+  database": there isn't one — SQLite is a local file and Cloud has no persistent
+  disk, so `SPAS_DB_ENABLED=0` is the honest setting.
+* 11 tests (`tests/test_runtime_env.py`); **111 total**.
+
+---
+
 ## [3.3.2] — 2026-11-04 — "Portable port, Render blueprint"
 
 * **The image honours `$PORT`.** Render, Cloud Run, Railway and Fly inject a port

@@ -1,0 +1,23 @@
+# ============================================================
+# Student Performance Assessment System -- repository-root requirements
+# ============================================================
+# WHY THIS FILE EXISTS
+#
+# The pinned dependencies live next to the application, at
+#     Code6/student_performance_app/requirements.txt
+# because that is where the Dockerfile, the tests and the docs install
+# from, and because a single source of truth beats three copies.
+#
+# Streamlit Community Cloud, however, installs from `requirements.txt`
+# in the REPOSITORY ROOT and does not look in subdirectories. Without
+# this file the app deploys with no pins at all -- and then fails at
+# import, because xgboost and shap are not part of Streamlit's default
+# image.
+#
+# `-r` keeps a single source of truth: edit the nested file, never this
+# one. Python 3.12+ is required (xgboost 3.4.1 and shap 0.54.1 both
+# declare requires-python >= 3.12); pick 3.12 in the Community Cloud
+# "Advanced settings" dialog.
+# ============================================================
+
+-r Code6/student_performance_app/requirements.txt

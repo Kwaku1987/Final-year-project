@@ -1,0 +1,39 @@
+# ============================================================
+# Student Performance Assessment System -- repository-root theme/server
+# ============================================================
+# WHY THIS FILE EXISTS
+#
+# Streamlit Community Cloud launches the app from the repository root, so
+# it looks for .streamlit/config.toml here, not in the application
+# subdirectory. Without it the deployed app falls back to Streamlit's
+# defaults (verbose toolbar, tracebacks shown to users, no upload cap).
+#
+# The canonical copy for Docker / local runs is
+#     Code6/student_performance_app/.streamlit/config.toml
+# Keep the [server] and [client] values in the two files identical; this
+# one exists for the hosted path only.
+#
+# Note: Community Cloud terminates TLS and serves the app on its own
+# origin, so CORS/XSRF protection can stay ON here. Do not disable it to
+# work around an iframe preview -- pass the two
+# --server.enableCORS/enableXsrfProtection flags on a local launch
+# instead, and leave this file alone.
+# ============================================================
+
+[server]
+headless = true
+enableCORS = true
+enableXsrfProtection = true
+maxUploadSize = 25
+enableStaticServing = false
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = false
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#1f6feb"

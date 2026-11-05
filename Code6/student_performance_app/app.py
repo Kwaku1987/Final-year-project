@@ -48,6 +48,21 @@ logger = logging.getLogger(__name__)
 
 import streamlit as st
 
+# ============================================================
+# RUNTIME CONFIGURATION (must run before anything reads config)
+# ============================================================
+# Streamlit Community Cloud exposes settings through st.secrets, not
+# through the process environment. Copy the known keys into os.environ
+# first, so backend/config.py, utils/auth.py and the persistence layer
+# see the same values they would on Docker or a bare server. A real
+# environment variable always wins, which makes this a no-op there.
+
+from utils.runtime_env import apply_secrets, describe
+
+_APPLIED_SECRETS = apply_secrets()
+
+logger.info(describe(_APPLIED_SECRETS))
+
 from dashboard.dashboard_controller import DashboardController
 
 from components.sidebar import (
